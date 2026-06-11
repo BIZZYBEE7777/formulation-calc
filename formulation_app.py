@@ -168,7 +168,11 @@ if not grams_mode:
             q_tkey = st.selectbox("Target spec", [
                 "total_amine_value", "acid_value", "amine_value",
                 "hydroxyl_value"],
-                format_func=lambda s: s.replace("_", " ").title(),
+                format_func=lambda s: {"total_amine_value":
+                                       "Total Amine Value (titration)",
+                                       "amine_value":
+                                       "Amine Value (unreacted NH only)"}
+                    .get(s, s.replace("_", " ").title()),
                 key="q_tk")
         with q4:
             q_tval = st.number_input("Target (mg KOH/g)", 0.0, 1500.0,
@@ -336,6 +340,13 @@ with c2:
     if reaction != "none":
         extent = st.slider("Conversion of limiting group (p)", 0.50, 1.00,
                            1.00, 0.005)
+basic_n_main = 3.0
+if "amidation" in reaction:
+    basic_n_main = st.number_input(
+        "Basic N per amine molecule (for Total Amine Value)", 1.0, 6.0, 3.0,
+        0.5, help="DETA=3, TETA=4, AEEA=2. Total Amine Value = all "
+                  "titratable basic N after amidation (one basic N lost per "
+                  "amide bond; cyclization is titration-neutral).")
 cyc_extent = 0.0
 if "imidazoline" in reaction:
     cyc_extent = st.slider(
@@ -453,7 +464,8 @@ if run and len(valid):
         st.stop()
 
     st.session_state.last = {"out": out, "rxn": rxn, "extent": extent,
-                             "cyc": cyc_extent, "grams_mode": grams_mode,
+                             "cyc": cyc_extent, "basic_n": basic_n_main,
+                             "grams_mode": grams_mode,
                              "norm_ratios": norm_ratios,
                              "comps": comps}
 
@@ -539,11 +551,22 @@ if "last" in st.session_state:
     ev, car = out["end_values"], out["carothers"]
     if rxn != "none":
         st.subheader("4 · Stoichiometric feedback")
-        f1, f2, f3 = st.columns(3)
+        f1, f2, f3, f4 = st.columns(4)
         if ev:
+            from formulation_core import total_amine_value as _tav
             f1.metric("Theoretical acid value", f"{ev['acid_value']:.1f}")
-            f2.metric("Theoretical amine value", f"{ev['amine_value']:.1f}")
-            f3.metric("Theoretical OH value", f"{ev['hydroxyl_value']:.1f}")
+            if rxn == "amidation":
+                f2.metric("Total amine value (titration)",
+                          f"{_tav(out, L.get('basic_n', 3.0)):.1f}",
+                          help="All titratable basic N after amidation — "
+                               "the number your burette gives. Basic N per "
+                               "amine set above the Calculate button.")
+            f3.metric("Unreacted amine value",
+                      f"{ev['amine_value']:.1f}",
+                      help="Residual UNREACTED reactive NH only — the "
+                           "step-growth bookkeeping number, NOT the "
+                           "titrated amine value of the product.")
+            f4.metric("Theoretical OH value", f"{ev['hydroxyl_value']:.1f}")
         if car:
             xn_s = "∞" if car["Xn"] == float("inf") else f"{car['Xn']:.1f}"
             mn_s = "∞" if car["Mn"] == float("inf") else f"{car['Mn']:.0f} g/mol"
@@ -624,7 +647,11 @@ if "last" in st.session_state:
                 mkey = st.selectbox("Measured value", [
                     "acid_value", "total_amine_value", "amine_value",
                     "hydroxyl_value"],
-                    format_func=lambda s: s.replace("_", " ").title())
+                    format_func=lambda s: {"total_amine_value":
+                                       "Total Amine Value (titration)",
+                                       "amine_value":
+                                       "Amine Value (unreacted NH only)"}
+                    .get(s, s.replace("_", " ").title()))
             with k2:
                 mval = st.number_input("Titrated value (mg KOH/g)",
                                        min_value=0.0, value=40.0,
@@ -680,7 +707,11 @@ if "last" in st.session_state:
                 tkey = st.selectbox("Target", [
                     "acid_value", "total_amine_value", "amine_value",
                     "hydroxyl_value"],
-                    format_func=lambda s: s.replace("_", " ").title(),
+                    format_func=lambda s: {"total_amine_value":
+                                       "Total Amine Value (titration)",
+                                       "amine_value":
+                                       "Amine Value (unreacted NH only)"}
+                    .get(s, s.replace("_", " ").title()),
                     key="tkey")
             with g3:
                 tval = st.number_input("Target value", min_value=0.0,
