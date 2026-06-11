@@ -202,3 +202,54 @@ def charge_sheet_text(summary, meta):
     ap("Notes / observations:")
     ap("\n\n\n")
     return "\n".join(L)
+
+
+# ---------------------------------------------------------------------------
+# Inverse mode + reformulation helpers
+# ---------------------------------------------------------------------------
+
+def grams_to_ratios(components):
+    """Inverse mode: each component dict carries 'g_asis_in' (grams as weighed).
+    Sets 'ratio' = moles so the normal pipeline at scale=1.0 reproduces the
+    batch exactly. Returns (components, normalized_ratio_list) where the
+    normalized ratios are relative to the smallest nonzero molar amount."""
+    for c in components:
+        active = c["g_asis_in"] * (c.get("assay", 1.0) or 1.0)
+        c["ratio"] = active / c["mw"] if c["mw"] else 0.0
+    nz = [c["ratio"] for c in components if c["ratio"] > 0]
+    base = min(nz) if nz else 1.0
+    normalized = [c["ratio"] / base if base else 0.0 for c in components]
+    return components, normalized
+
+
+def weight_percents(rows):
+    """As-is and active wt% for a computed rows list."""
+    tot_asis = sum(r["g_asis"] for r in rows) or 1.0
+    tot_act = sum(r["g_active"] for r in rows) or 1.0
+    return [(100.0 * r["g_asis"] / tot_asis,
+             100.0 * r["g_active"] / tot_act) for r in rows]
+
+
+def adjust_to_yield(amounts, changed_idx, new_amount, absorber_idxs):
+    """Reformulation: change one ingredient's as-is grams while holding total
+    batch mass constant. The difference is absorbed by `absorber_idxs`
+    proportionally to their current amounts.
+
+    Returns (new_amounts, warning_or_None)."""
+    amounts = list(amounts)
+    delta = new_amount - amounts[changed_idx]
+    absorbers = [i for i in absorber_idxs if i != changed_idx]
+    pool = sum(amounts[i] for i in absorbers)
+    if not absorbers or pool <= 0:
+        return amounts, "No valid absorber ingredients selected."
+    warning = None
+    new_amounts = list(amounts)
+    new_amounts[changed_idx] = new_amount
+    for i in absorbers:
+        share = amounts[i] / pool
+        new_amounts[i] = amounts[i] - delta * share
+        if new_amounts[i] < 0:
+            warning = (f"Adjustment drives an absorber below zero grams "
+                       f"(index {i}). Reduce the change or add absorbers.")
+            new_amounts[i] = 0.0
+    return new_amounts, warning
