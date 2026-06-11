@@ -362,3 +362,72 @@ def blend_sheet_text(names, solids_pcts, grams, batch_label, blend_pct, meta):
     ap("Notes:")
     ap("\n\n")
     return "\n".join(L)
+
+
+def solve_blend(specs, target_pct):
+    """Constraint solver for cold blends, per 100 g of final product.
+
+    specs: list of dicts {name, solids_pct, role, value} where role is:
+      'fixed'   -- ingredient is a fixed wt% of the final blend (value = wt%)
+      'ratio'   -- solids-carrier group held at relative weight ratios
+                   (value = ratio number, e.g. 2 and 1 for a 2:1 pair)
+      'balance' -- exactly ONE ingredient that fills to 100% (value ignored)
+    target_pct: target % solids of the final blend.
+
+    Returns (parts_per_100g_list, warning_or_None).
+    """
+    n = len(specs)
+    parts = [0.0] * n
+    fixed_idx = [i for i, s in enumerate(specs) if s["role"] == "fixed"]
+    ratio_idx = [i for i, s in enumerate(specs) if s["role"] == "ratio"]
+    bal_idx = [i for i, s in enumerate(specs) if s["role"] == "balance"]
+
+    if len(bal_idx) != 1:
+        return parts, ("Mark exactly ONE ingredient as 'balance' (usually "
+                       "water) — it fills the blend to 100%.")
+    b = bal_idx[0]
+    s_w = specs[b]["solids_pct"] / 100.0
+
+    F = sum(specs[i]["value"] for i in fixed_idx)
+    Sf = sum(specs[i]["value"] * specs[i]["solids_pct"] / 100.0
+             for i in fixed_idx)
+    R_m = sum(specs[i]["value"] for i in ratio_idx)
+    R_s = sum(specs[i]["value"] * specs[i]["solids_pct"] / 100.0
+              for i in ratio_idx)
+
+    if F > 100:
+        return parts, "Fixed wt% ingredients alone exceed 100%."
+
+    T = target_pct  # g solids per 100 g
+    if ratio_idx:
+        denom = R_s - R_m * s_w
+        if abs(denom) < 1e-12:
+            return parts, ("Solids-ratio group and balance ingredient have "
+                           "the same effective solids — target can't be set "
+                           "by trading between them.")
+        k = (T - Sf - (100.0 - F) * s_w) / denom
+        if k < 0:
+            return parts, (f"Unreachable: hitting {T:.2f}% solids would need "
+                           f"a negative amount of the ratio group. Check the "
+                           f"target vs. fixed ingredients' solids.")
+        for i in ratio_idx:
+            parts[i] = k * specs[i]["value"]
+    else:
+        k = 0.0
+
+    w = 100.0 - F - k * R_m
+    if w < -1e-9:
+        return parts, (f"Unreachable: fixed + solids-carrier masses exceed "
+                       f"100 g per 100 g of blend (over by {-w:.2f} g). "
+                       f"Lower the target % solids or a fixed wt%.")
+    parts[b] = max(w, 0.0)
+    for i in fixed_idx:
+        parts[i] = specs[i]["value"]
+
+    # verify
+    tot = sum(parts)
+    solids = sum(p * s["solids_pct"] / 100.0 for p, s in zip(parts, specs))
+    if abs(tot - 100.0) > 1e-6 or abs(solids - T) > 1e-6:
+        return parts, (f"Solver sanity check failed (mass {tot:.3f}, solids "
+                       f"{solids:.3f}) — please report this combination.")
+    return parts, None
