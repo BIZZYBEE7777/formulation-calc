@@ -36,13 +36,17 @@ def component_calcs(components, scale=1.0):
 
 
 def totals(rows):
-    return {
+    t = {
         "g_asis": sum(r["g_asis"] for r in rows),
         "g_active": sum(r["g_active"] for r in rows),
-        "eq_acid": sum(r["eq"] for r in rows if r["group"] == "acid"),
+        "eq_acid": sum(r["eq"] for r in rows if r["group"] in ("acid", "anhydride")),
         "eq_amine": sum(r["eq"] for r in rows if r["group"] == "amine"),
         "eq_oh": sum(r["eq"] for r in rows if r["group"] == "hydroxyl"),
+        "eq_capper": sum(r["eq"] for r in rows if r["group"] == "capper"),
+        # one water-free ring-opening per anhydride MOLECULE:
+        "anh_moles": sum(r["moles"] for r in rows if r["group"] == "anhydride"),
     }
+    return t
 
 
 def solve_scale(components, anchor_type, anchor_value, anchor_component=None):
@@ -65,29 +69,50 @@ def solve_scale(components, anchor_type, anchor_value, anchor_component=None):
 
 
 def condensation(rows, reaction, extent=1.0):
-    """Water of condensation + residual equivalents at conversion `extent`
-    (extent = fraction of the LIMITING group that reacts)."""
+    """Bonds + water of condensation + residual equivalents at conversion
+    `extent` (fraction of the LIMITING side that reacts).
+
+    Water-free bonds:
+      - addition cappers (e.g. DCPD across a COOH): never release water
+      - each anhydride molecule's FIRST ring-opening releases no water
+    Assumption: cappers and anhydride first-openings are credited before
+    water-releasing bonds (capping/ring-opening go early in real cooks).
+    """
     t = totals(rows)
     if reaction == "amidation":
-        a, b = t["eq_acid"], t["eq_amine"]
+        acid_side, nuc_side = t["eq_acid"], t["eq_amine"] + t["eq_capper"]
     elif reaction == "esterification":
-        a, b = t["eq_acid"], t["eq_oh"]
+        acid_side, nuc_side = t["eq_acid"], t["eq_oh"] + t["eq_capper"]
     else:
         return {"bonds": 0.0, "water_g": 0.0, "p_limiting": 0.0,
+                "acid_side": t["eq_acid"], "nuc_side": 0.0,
                 "residual": {"acid": t["eq_acid"], "amine": t["eq_amine"],
-                             "hydroxyl": t["eq_oh"]}}
-    limiting = min(a, b)
+                             "hydroxyl": t["eq_oh"], "capper": t["eq_capper"]}}
+
+    limiting = min(acid_side, nuc_side)
     bonds = limiting * extent
-    water_g = bonds * WATER_MW
-    residual = {"acid": t["eq_acid"], "amine": t["eq_amine"],
-                "hydroxyl": t["eq_oh"]}
+
+    # capper bonds happen first (no water), then anhydride first-openings
+    capper_bonds = min(t["eq_capper"], bonds)
+    anh_free = min(t["anh_moles"], bonds)
+    water_free = min(bonds, capper_bonds + anh_free)
+    # NOTE: assumes capper bonds and anhydride first-openings are distinct
+    # bonds when possible; when a capper opens an anhydride this slightly
+    # over-credits water-free bonds. Conservative for water COLLECTION
+    # planning; flag in UI.
+    water_g = (bonds - water_free) * WATER_MW
+
+    residual = {"acid": t["eq_acid"] - bonds,
+                "amine": t["eq_amine"], "hydroxyl": t["eq_oh"],
+                "capper": t["eq_capper"] - capper_bonds}
+    nuc_bonds_remaining = bonds - capper_bonds
     if reaction == "amidation":
-        residual["acid"] -= bonds
-        residual["amine"] -= bonds
+        residual["amine"] -= nuc_bonds_remaining
     else:
-        residual["acid"] -= bonds
-        residual["hydroxyl"] -= bonds
+        residual["hydroxyl"] -= nuc_bonds_remaining
+
     return {"bonds": bonds, "water_g": water_g, "p_limiting": extent,
+            "acid_side": acid_side, "nuc_side": nuc_side,
             "residual": residual}
 
 
@@ -115,19 +140,19 @@ def batch_summary(components, scale, reaction="none", extent=1.0):
     car = {}
     if reaction in ("amidation", "esterification"):
         partner = "amine" if reaction == "amidation" else "hydroxyl"
-        ea = t["eq_acid"]
-        eb = t["eq_amine"] if reaction == "amidation" else t["eq_oh"]
+        ea, eb = cond["acid_side"], cond["nuc_side"]
         if ea > 0 and eb > 0:
             r_ratio = min(ea, eb) / max(ea, eb)
             p = extent
             denom = 1 + r_ratio - 2 * r_ratio * p
             xn = (1 + r_ratio) / denom if denom > 1e-12 else float("inf")
-            reacting = [x for x in rows if x["group"] in ("acid", partner)]
+            react_groups = ("acid", "anhydride", partner, "capper")
+            reacting = [x for x in rows if x["group"] in react_groups]
             n0 = sum(x["moles"] for x in reacting)
             mass_react = sum(x["g_active"] for x in reacting) - cond["water_g"]
             chains = n0 - cond["bonds"]
             mn = mass_react / chains if chains > 1e-12 else float("inf")
-            excess_grp = "acid" if ea > eb else partner
+            excess_grp = "acid" if ea > eb else partner + "/capper"
             car = {"r": r_ratio, "Xn": xn, "Mn": mn, "excess_group": excess_grp,
                    "excess_pct": 100.0 * (max(ea, eb) / min(ea, eb) - 1.0)}
 

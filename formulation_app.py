@@ -96,8 +96,12 @@ edited = st.data_editor(
             help="Reactive groups per molecule (diacid = 2, DETA ≈ 2 primary "
                  "NH2 for amidation, glycerol = 3...)"),
         "Group": st.column_config.SelectboxColumn(
-            options=["acid", "amine", "hydroxyl", "inert"],
-            help="'inert' = solvent/non-reactive; excluded from stoichiometry"),
+            options=["acid", "amine", "hydroxyl", "anhydride", "capper",
+                     "inert"],
+            help="'anhydride' = f×acid eq, first ring-opening releases no "
+                 "H2O (MA: f=2). 'capper' = addition capper, consumes an "
+                 "acid eq with no H2O (DCPD: f=1). 'inert' = solvent/"
+                 "non-reactive."),
         "Molar ratio": st.column_config.NumberColumn(
             min_value=0.0, format="%.4f"),
     },
