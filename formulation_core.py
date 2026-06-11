@@ -68,15 +68,17 @@ def solve_scale(components, anchor_type, anchor_value, anchor_component=None):
     raise ValueError(anchor_type)
 
 
-def condensation(rows, reaction, extent=1.0):
+def condensation(rows, reaction, extent=1.0, cyc_extent=0.0):
     """Bonds + water of condensation + residual equivalents at conversion
     `extent` (fraction of the LIMITING side that reacts).
 
     Water-free bonds:
       - addition cappers (e.g. DCPD across a COOH): never release water
       - each anhydride molecule's FIRST ring-opening releases no water
-    Assumption: cappers and anhydride first-openings are credited before
-    water-releasing bonds (capping/ring-opening go early in real cooks).
+    Imidazoline cyclization: `cyc_extent` (0-1) of eligible amide pairs
+    release a SECOND water on ring closure. Eligible pairs are capped at
+    the molar amount of amine components (one ring per polyamine molecule,
+    DETA-style).
     """
     t = totals(rows)
     if reaction == "amidation":
@@ -84,7 +86,8 @@ def condensation(rows, reaction, extent=1.0):
     elif reaction == "esterification":
         acid_side, nuc_side = t["eq_acid"], t["eq_oh"] + t["eq_capper"]
     else:
-        return {"bonds": 0.0, "water_g": 0.0, "p_limiting": 0.0,
+        return {"bonds": 0.0, "water_g": 0.0, "water_amide_g": 0.0,
+                "water_cyc_g": 0.0, "cyc_rings": 0.0, "p_limiting": 0.0,
                 "acid_side": t["eq_acid"], "nuc_side": 0.0,
                 "residual": {"acid": t["eq_acid"], "amine": t["eq_amine"],
                              "hydroxyl": t["eq_oh"], "capper": t["eq_capper"]}}
@@ -102,6 +105,14 @@ def condensation(rows, reaction, extent=1.0):
     # planning; flag in UI.
     water_g = (bonds - water_free) * WATER_MW
 
+    # imidazoline cyclization: second water per ring, one ring max per
+    # amine-component molecule
+    amine_moles = sum(r["moles"] for r in rows if r["group"] == "amine")
+    cyc_eligible = min(bonds, amine_moles)
+    cyc_rings = cyc_eligible * max(0.0, min(1.0, cyc_extent))
+    water_cyc_g = cyc_rings * WATER_MW
+    water_total = water_g + water_cyc_g
+
     residual = {"acid": t["eq_acid"] - bonds,
                 "amine": t["eq_amine"], "hydroxyl": t["eq_oh"],
                 "capper": t["eq_capper"] - capper_bonds}
@@ -111,16 +122,18 @@ def condensation(rows, reaction, extent=1.0):
     else:
         residual["hydroxyl"] -= nuc_bonds_remaining
 
-    return {"bonds": bonds, "water_g": water_g, "p_limiting": extent,
+    return {"bonds": bonds, "water_g": water_total,
+            "water_amide_g": water_g, "water_cyc_g": water_cyc_g,
+            "cyc_rings": cyc_rings, "p_limiting": extent,
             "acid_side": acid_side, "nuc_side": nuc_side,
             "residual": residual}
 
 
-def batch_summary(components, scale, reaction="none", extent=1.0):
+def batch_summary(components, scale, reaction="none", extent=1.0, cyc_extent=0.0):
     """Everything the bench needs, at the solved scale."""
     rows = component_calcs(components, scale)
     t = totals(rows)
-    cond = condensation(rows, reaction, extent)
+    cond = condensation(rows, reaction, extent, cyc_extent)
 
     charge_mass = t["g_asis"]                       # what goes in the kettle
     inerts = t["g_asis"] - t["g_active"]            # solvent/water-of-dilution etc.
@@ -431,3 +444,81 @@ def solve_blend(specs, target_pct):
         return parts, (f"Solver sanity check failed (mass {tot:.3f}, solids "
                        f"{solids:.3f}) — please report this combination.")
     return parts, None
+
+
+# ---------------------------------------------------------------------------
+# Cook tracker + spec-targeting solvers (1-D bisection on monotone responses)
+# ---------------------------------------------------------------------------
+
+def _value_at(components, reaction, key, extent, cyc_extent):
+    out = batch_summary(components, 1.0, reaction=reaction, extent=extent,
+                        cyc_extent=cyc_extent)
+    return out["end_values"].get(key, 0.0), out
+
+
+def p_from_measured(components, reaction, key, measured, cyc_extent=0.0):
+    """Cook tracker: invert a measured end value (key in 'acid_value',
+    'amine_value', 'hydroxyl_value') to the implied conversion p.
+    Returns (p, summary_at_p, warning_or_None)."""
+    lo, hi = 0.0, 1.0
+    v_lo, _ = _value_at(components, reaction, key, lo, cyc_extent)
+    v_hi, _ = _value_at(components, reaction, key, hi, cyc_extent)
+    # end values fall as p rises
+    if not (min(v_hi, v_lo) - 1e-9 <= measured <= max(v_hi, v_lo) + 1e-9):
+        return None, None, (f"Measured {measured:.1f} is outside the "
+                            f"theoretical range for this charge "
+                            f"({min(v_lo, v_hi):.1f} at p=1 to "
+                            f"{max(v_lo, v_hi):.1f} at p=0). Check the value, "
+                            f"the charge entries, or sample dilution.")
+    for _ in range(80):
+        mid = (lo + hi) / 2.0
+        v, _ = _value_at(components, reaction, key, mid, cyc_extent)
+        if (v - measured) * (v_lo - measured) > 0:
+            lo, v_lo = mid, v
+        else:
+            hi = mid
+    p = (lo + hi) / 2.0
+    _, summary = _value_at(components, reaction, key, p, cyc_extent)
+    return p, summary, None
+
+
+def solve_ratio_for_target(components, vary_name, reaction, key, target,
+                           extent=1.0, cyc_extent=0.0, max_ratio=1000.0):
+    """Spec targeting: solve ONE component's molar ratio so the end value
+    `key` hits `target` at conversion `extent`. Other ratios held fixed.
+    Returns (ratio, summary, warning_or_None)."""
+    idx = next((i for i, c in enumerate(components)
+                if c["name"] == vary_name), None)
+    if idx is None:
+        return None, None, "Component not found."
+
+    def val(r):
+        comps = [dict(c) for c in components]
+        comps[idx]["ratio"] = r
+        out = batch_summary(comps, 1.0, reaction=reaction, extent=extent,
+                            cyc_extent=cyc_extent)
+        return out["end_values"].get(key, 0.0), out
+
+    lo, hi = 1e-6, 1.0
+    v_lo, _ = val(lo)
+    v_hi, _ = val(hi)
+    # expand upper bracket until target enclosed or limit hit
+    while (v_lo - target) * (v_hi - target) > 0 and hi < max_ratio:
+        hi *= 2.0
+        v_hi, _ = val(hi)
+    if (v_lo - target) * (v_hi - target) > 0:
+        return None, None, (f"No amount of '{vary_name}' between ~0 and "
+                            f"{max_ratio:g} (molar ratio) reaches "
+                            f"{key.replace('_', ' ')} = {target:.1f} at "
+                            f"p = {extent:.3f}. Vary a different component "
+                            f"or revisit the target.")
+    for _ in range(90):
+        mid = (lo + hi) / 2.0
+        v, _ = val(mid)
+        if (v - target) * (v_lo - target) > 0:
+            lo, v_lo = mid, v
+        else:
+            hi = mid
+    r = (lo + hi) / 2.0
+    _, summary = val(r)
+    return r, summary, None

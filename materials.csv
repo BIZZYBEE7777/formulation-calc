@@ -1,0 +1,7 @@
+Name,CAS,MW,Functionality,Assay %,Group,Notes
+Dimer acid (C18 unsatd. dimers),61788-89-4,565,2,100,acid,Effective MW - verify vs CoA acid value
+DETA (diethylenetriamine),111-40-0,103.17,2,99,amine,f=2 primary NH2 for amidation; secondary N cyclizes to imidazoline
+Maleic anhydride,108-31-6,98.06,2,100,anhydride,First ring-opening releases no water
+DCPD (dicyclopentadiene),77-73-6,132.20,1,97,capper,Addition across COOH; no water
+Propylene glycol,57-55-6,76.09,2,100,hydroxyl,
+Water,7732-18-5,18.02,0,100,inert,

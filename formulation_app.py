@@ -160,6 +160,40 @@ edited = st.data_editor(
     key="editor",
 )
 
+# ---------------- materials library ----------------
+LIB_FILE = Path(__file__).parent / "materials.csv"
+if LIB_FILE.exists():
+    try:
+        _lib = pd.read_csv(LIB_FILE, dtype=str).fillna("")
+        lib_names = _lib["Name"].tolist()
+        lc1, lc2 = st.columns([3, 1])
+        with lc1:
+            pick_mat = st.selectbox("📚 Add from materials library",
+                                    ["—"] + lib_names)
+        with lc2:
+            st.write("")
+            if st.button("Add to table") and pick_mat != "—":
+                row = _lib[_lib["Name"] == pick_mat].iloc[0]
+                new_row = {
+                    "Component": row.get("Name", ""),
+                    "CAS / name for lookup": row.get("CAS", ""),
+                    "MW (g/mol)": float(row.get("MW") or 0) or None,
+                    "Assay %": float(row.get("Assay %") or 100),
+                    "Functionality": float(row.get("Functionality") or 2),
+                    "Group": (row.get("Group") or "acid").strip().lower(),
+                    "Amount": 1.0,
+                }
+                st.session_state.table = pd.concat(
+                    [st.session_state.table, pd.DataFrame([new_row])],
+                    ignore_index=True)
+                st.rerun()
+    except Exception as e:
+        st.warning(f"materials.csv found but unreadable: {e}")
+else:
+    st.caption("📚 Tip: add a `materials.csv` to the repo (columns: Name, "
+               "CAS, MW, Functionality, Assay %, Group, Notes) and your "
+               "lab's raw materials become a pick list here.")
+
 if st.button("🔎 Fill missing MWs from PubChem"):
     misses = []
     for i, row in edited.iterrows():
@@ -201,12 +235,21 @@ else:
         anchor_comp = st.selectbox("Anchor component", names)
 with c1:
     reaction = st.selectbox("Condensation reaction", [
-        "none", "amidation (acid+amine)", "esterification (acid+OH)"])
+        "none", "amidation (acid+amine)",
+        "amidation + imidazoline (acid+amine)",
+        "esterification (acid+OH)"])
 with c2:
     extent = 1.0
     if reaction != "none":
         extent = st.slider("Conversion of limiting group (p)", 0.50, 1.00,
                            1.00, 0.005)
+cyc_extent = 0.0
+if "imidazoline" in reaction:
+    cyc_extent = st.slider(
+        "Cyclization extent (amide → imidazoline)", 0.0, 1.0, 0.0, 0.01,
+        help="Fraction of eligible amide pairs ring-closed, releasing a "
+             "SECOND water each (one ring max per polyamine molecule). "
+             "Receiver water vs. prediction is your live measure of this.")
 
 run = st.button("Calculate batch", type="primary", use_container_width=True)
 
@@ -218,6 +261,7 @@ if run and len(valid):
         "group": r["Group"],
     } for _, r in valid.iterrows()]
     rxn = {"none": "none", "amidation (acid+amine)": "amidation",
+           "amidation + imidazoline (acid+amine)": "amidation",
            "esterification (acid+OH)": "esterification"}[reaction]
 
     try:
@@ -234,13 +278,14 @@ if run and len(valid):
                      "Fixed component moles": "component_moles"}[anchor_type]
             scale = solve_scale(comps, atype, anchor_value, anchor_comp)
             norm_ratios = None
-        out = batch_summary(comps, scale, reaction=rxn, extent=extent)
+        out = batch_summary(comps, scale, reaction=rxn, extent=extent,
+                            cyc_extent=cyc_extent)
     except Exception as e:
         st.error(f"Calculation failed: {e}")
         st.stop()
 
     st.session_state.last = {"out": out, "rxn": rxn, "extent": extent,
-                             "grams_mode": grams_mode,
+                             "cyc": cyc_extent, "grams_mode": grams_mode,
                              "norm_ratios": norm_ratios,
                              "comps": comps}
 
@@ -268,7 +313,11 @@ if "last" in st.session_state:
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total charge (as-is)", f"{out['charge_mass']:.1f} g")
     if rxn != "none":
-        m2.metric("Predicted condensate", f"{out['cond']['water_g']:.2f} g H₂O")
+        cyc_note = (f" (amide {out['cond']['water_amide_g']:.1f} + "
+                    f"ring {out['cond']['water_cyc_g']:.1f})"
+                    if out['cond'].get('water_cyc_g', 0) > 0 else "")
+        m2.metric("Predicted condensate",
+                  f"{out['cond']['water_g']:.2f} g H₂O", cyc_note or None)
         m3.metric("Theoretical final mass", f"{out['final_mass']:.1f} g")
         m4.metric("Theoretical solids", f"{out['solids_pct']:.1f}%")
     else:
@@ -396,6 +445,96 @@ if "last" in st.session_state:
                 if st.button("Clear change log"):
                     st.session_state.changelog = []
                     st.rerun()
+
+    # ---------------- cook tracker ----------------
+    if rxn != "none":
+        with st.expander("🧪 Cook tracker — where am I in the reaction?"):
+            st.caption("Enter a mid-cook titration; get implied conversion, "
+                       "predicted water to this point, and projected finals.")
+            k1, k2, k3 = st.columns(3)
+            with k1:
+                mkey = st.selectbox("Measured value", [
+                    "acid_value", "amine_value", "hydroxyl_value"],
+                    format_func=lambda s: s.replace("_", " ").title())
+            with k2:
+                mval = st.number_input("Titrated value (mg KOH/g)",
+                                       min_value=0.0, value=40.0,
+                                       format="%.1f")
+            with k3:
+                st.write("")
+                go_track = st.button("Locate cook")
+            if go_track:
+                from formulation_core import p_from_measured
+                p_now, summ, twarn = p_from_measured(
+                    L["comps"], rxn, mkey, mval, cyc_extent=L.get("cyc", 0.0))
+                if twarn:
+                    st.warning(twarn)
+                else:
+                    frac = out["cond"]["water_g"]
+                    w_now = summ["cond"]["water_g"] / summ["charge_mass"]                         * out["charge_mass"]
+                    t1c, t2c, t3c = st.columns(3)
+                    t1c.metric("Implied conversion p", f"{p_now:.3f}")
+                    t2c.metric("Water evolved by now",
+                               f"{w_now:.1f} g",
+                               help="Compare to the receiver. Receiver HIGH "
+                                    "vs this → more cyclization than the "
+                                    "slider assumes; LOW → less.")
+                    t3c.metric("Water remaining to p=1",
+                               f"{max(frac - w_now, 0):.1f} g")
+                    fin = out["end_values"]
+                    st.info(f"Projected finals at p = {L['extent']:.3f}: "
+                            f"AV {fin.get('acid_value', 0):.1f} · AmV "
+                            f"{fin.get('amine_value', 0):.1f} · OHV "
+                            f"{fin.get('hydroxyl_value', 0):.1f}")
+
+    # ---------------- spec targeting (ratio mode) ----------------
+    if rxn != "none" and not L["grams_mode"]:
+        with st.expander("🎯 Hit a target spec — solve a component ratio"):
+            st.caption("Pick the component to vary; everything else holds. "
+                       "Solved at the current p and cyclization settings.")
+            comp_names_t = [c["name"] for c in L["comps"]]
+            g1, g2, g3, g4 = st.columns(4)
+            with g1:
+                vary = st.selectbox("Vary component", comp_names_t)
+            with g2:
+                tkey = st.selectbox("Target", [
+                    "acid_value", "amine_value", "hydroxyl_value"],
+                    format_func=lambda s: s.replace("_", " ").title(),
+                    key="tkey")
+            with g3:
+                tval = st.number_input("Target value", min_value=0.0,
+                                       value=280.0, format="%.1f")
+            with g4:
+                st.write("")
+                go_solve = st.button("Solve ratio")
+            if go_solve:
+                from formulation_core import solve_ratio_for_target
+                r_new, summ2, swarn = solve_ratio_for_target(
+                    L["comps"], vary, rxn, tkey, tval,
+                    extent=L["extent"], cyc_extent=L.get("cyc", 0.0))
+                if swarn:
+                    st.warning(swarn)
+                else:
+                    old_r = next(c["ratio"] for c in L["comps"]
+                                 if c["name"] == vary)
+                    st.success(f"**{vary}: molar ratio {old_r:.4f} → "
+                               f"{r_new:.4f}** hits "
+                               f"{tkey.replace('_', ' ')} = {tval:.1f}")
+                    e2 = summ2["end_values"]
+                    st.info(f"Resulting theory: AV {e2['acid_value']:.1f} · "
+                            f"AmV {e2['amine_value']:.1f} · OHV "
+                            f"{e2['hydroxyl_value']:.1f}")
+                    st.session_state.changelog.append(
+                        f"[{date.today()}] Spec solve: {vary} ratio "
+                        f"{old_r:.4f} → {r_new:.4f} for "
+                        f"{tkey.replace('_', ' ')} {tval:.1f}")
+                    tbl = st.session_state.table.copy()
+                    for i2 in tbl.index:
+                        if str(tbl.at[i2, "Component"]).strip() == vary:
+                            tbl.at[i2, "Amount"] = r_new
+                    st.session_state.table = tbl
+                    st.caption("Ratio written to the table — press "
+                               "**Calculate batch** to refresh all numbers.")
 
     # ---------------- charge sheet ----------------
     st.subheader("6 · Charge sheet" if L["grams_mode"] else "5 · Charge sheet")
