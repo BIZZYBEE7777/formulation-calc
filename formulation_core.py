@@ -450,19 +450,20 @@ def solve_blend(specs, target_pct):
 # Cook tracker + spec-targeting solvers (1-D bisection on monotone responses)
 # ---------------------------------------------------------------------------
 
-def _value_at(components, reaction, key, extent, cyc_extent):
+def _value_at(components, reaction, key, extent, cyc_extent, basic_n=3.0):
     out = batch_summary(components, 1.0, reaction=reaction, extent=extent,
                         cyc_extent=cyc_extent)
-    return out["end_values"].get(key, 0.0), out
+    return spec_value(out, key, basic_n), out
 
 
-def p_from_measured(components, reaction, key, measured, cyc_extent=0.0):
+def p_from_measured(components, reaction, key, measured, cyc_extent=0.0,
+                    basic_n=3.0):
     """Cook tracker: invert a measured end value (key in 'acid_value',
     'amine_value', 'hydroxyl_value') to the implied conversion p.
     Returns (p, summary_at_p, warning_or_None)."""
     lo, hi = 0.0, 1.0
-    v_lo, _ = _value_at(components, reaction, key, lo, cyc_extent)
-    v_hi, _ = _value_at(components, reaction, key, hi, cyc_extent)
+    v_lo, _ = _value_at(components, reaction, key, lo, cyc_extent, basic_n)
+    v_hi, _ = _value_at(components, reaction, key, hi, cyc_extent, basic_n)
     # end values fall as p rises
     if not (min(v_hi, v_lo) - 1e-9 <= measured <= max(v_hi, v_lo) + 1e-9):
         return None, None, (f"Measured {measured:.1f} is outside the "
@@ -472,18 +473,20 @@ def p_from_measured(components, reaction, key, measured, cyc_extent=0.0):
                             f"the charge entries, or sample dilution.")
     for _ in range(80):
         mid = (lo + hi) / 2.0
-        v, _ = _value_at(components, reaction, key, mid, cyc_extent)
+        v, _ = _value_at(components, reaction, key, mid, cyc_extent,
+                         basic_n)
         if (v - measured) * (v_lo - measured) > 0:
             lo, v_lo = mid, v
         else:
             hi = mid
     p = (lo + hi) / 2.0
-    _, summary = _value_at(components, reaction, key, p, cyc_extent)
+    _, summary = _value_at(components, reaction, key, p, cyc_extent, basic_n)
     return p, summary, None
 
 
 def solve_ratio_for_target(components, vary_name, reaction, key, target,
-                           extent=1.0, cyc_extent=0.0, max_ratio=1000.0):
+                           extent=1.0, cyc_extent=0.0, max_ratio=1000.0,
+                           basic_n=3.0):
     """Spec targeting: solve ONE component's molar ratio so the end value
     `key` hits `target` at conversion `extent`. Other ratios held fixed.
     Returns (ratio, summary, warning_or_None)."""
@@ -497,7 +500,7 @@ def solve_ratio_for_target(components, vary_name, reaction, key, target,
         comps[idx]["ratio"] = r
         out = batch_summary(comps, 1.0, reaction=reaction, extent=extent,
                             cyc_extent=cyc_extent)
-        return out["end_values"].get(key, 0.0), out
+        return spec_value(out, key, basic_n), out
 
     lo, hi = 1e-6, 1.0
     v_lo, _ = val(lo)
@@ -614,3 +617,39 @@ def solve_imidazoline(target_pct, basis, R, p=1.0,
             hi = mid
     c = (lo + hi) / 2
     return c, imidazoline_species(R, p, c, mw_acid, mw_amine), None
+
+
+# ---------------------------------------------------------------------------
+# Total amine value (TAV) + generalized spec extraction
+# ---------------------------------------------------------------------------
+
+def total_amine_value(summary, basic_n_per_amine=3.0):
+    """Titration-realistic TAV (mg KOH/g resin): counts ALL basic N on amine
+    components. Each amide bond converts one basic N to non-basic amide N;
+    cyclization consumes a secondary N but creates a basic ring C=N, so it's
+    roughly TAV-neutral. basic_n_per_amine: DETA=3, TETA=4, AEEA=2..."""
+    amine_moles = sum(r["moles"] for r in summary["rows"]
+                      if r["group"] == "amine")
+    basic_eq = max(0.0, amine_moles * basic_n_per_amine
+                   - summary["cond"]["bonds"])
+    resin = summary["resin_mass"]
+    return KOH_MW_MG * basic_eq / resin if resin > 0 else 0.0
+
+
+def spec_value(summary, key, basic_n=3.0):
+    if key == "total_amine_value":
+        return total_amine_value(summary, basic_n)
+    return summary["end_values"].get(key, 0.0)
+
+
+def monoaddition_clone(components):
+    """Monoaddition assumption: each polyamine accepts ONE acyl group
+    (no diamides). Implemented as amine functionality -> 1 for bond
+    formation; basic-N count for TAV is unaffected."""
+    out = []
+    for c in components:
+        c2 = dict(c)
+        if c2.get("group") == "amine":
+            c2["functionality"] = min(1.0, float(c2.get("functionality", 1)))
+        out.append(c2)
+    return out

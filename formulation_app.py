@@ -526,22 +526,34 @@ if "last" in st.session_state:
         with st.expander("🧪 Cook tracker — where am I in the reaction?"):
             st.caption("Enter a mid-cook titration; get implied conversion, "
                        "predicted water to this point, and projected finals.")
-            k1, k2, k3 = st.columns(3)
+            k1, k2, k3, k4 = st.columns(4)
             with k1:
                 mkey = st.selectbox("Measured value", [
-                    "acid_value", "amine_value", "hydroxyl_value"],
+                    "acid_value", "total_amine_value", "amine_value",
+                    "hydroxyl_value"],
                     format_func=lambda s: s.replace("_", " ").title())
             with k2:
                 mval = st.number_input("Titrated value (mg KOH/g)",
                                        min_value=0.0, value=40.0,
                                        format="%.1f")
             with k3:
-                st.write("")
+                basic_n_t = st.number_input(
+                    "Basic N per amine", 1.0, 6.0, 3.0, 0.5,
+                    help="For Total Amine Value. DETA=3, TETA=4, AEEA=2.",
+                    key="bn_track")
+            with k4:
+                mono_t = st.checkbox("Monoaddition", value=True,
+                                     help="One acyl per polyamine (no "
+                                          "diamides).", key="mono_track")
                 go_track = st.button("Locate cook")
             if go_track:
-                from formulation_core import p_from_measured
+                from formulation_core import (p_from_measured,
+                                              monoaddition_clone)
+                comps_t = (monoaddition_clone(L["comps"]) if mono_t
+                           else L["comps"])
                 p_now, summ, twarn = p_from_measured(
-                    L["comps"], rxn, mkey, mval, cyc_extent=L.get("cyc", 0.0))
+                    comps_t, rxn, mkey, mval, cyc_extent=L.get("cyc", 0.0),
+                    basic_n=basic_n_t)
                 if twarn:
                     st.warning(twarn)
                 else:
@@ -568,25 +580,39 @@ if "last" in st.session_state:
             st.caption("Pick the component to vary; everything else holds. "
                        "Solved at the current p and cyclization settings.")
             comp_names_t = [c["name"] for c in L["comps"]]
-            g1, g2, g3, g4 = st.columns(4)
+            g1, g2, g3, g4, g5 = st.columns(5)
             with g1:
                 vary = st.selectbox("Vary component", comp_names_t)
             with g2:
                 tkey = st.selectbox("Target", [
-                    "acid_value", "amine_value", "hydroxyl_value"],
+                    "acid_value", "total_amine_value", "amine_value",
+                    "hydroxyl_value"],
                     format_func=lambda s: s.replace("_", " ").title(),
                     key="tkey")
             with g3:
                 tval = st.number_input("Target value", min_value=0.0,
                                        value=280.0, format="%.1f")
             with g4:
+                basic_n_s = st.number_input(
+                    "Basic N per amine", 1.0, 6.0, 3.0, 0.5,
+                    help="For Total Amine Value. DETA=3, TETA=4.",
+                    key="bn_spec")
+                mono_s = st.checkbox("Monoaddition", value=True,
+                                     key="mono_spec",
+                                     help="One acyl per polyamine.")
+            with g5:
                 st.write("")
                 go_solve = st.button("Solve ratio")
             if go_solve:
-                from formulation_core import solve_ratio_for_target
+                from formulation_core import (solve_ratio_for_target,
+                                              monoaddition_clone,
+                                              total_amine_value)
+                comps_s = (monoaddition_clone(L["comps"]) if mono_s
+                           else L["comps"])
                 r_new, summ2, swarn = solve_ratio_for_target(
-                    L["comps"], vary, rxn, tkey, tval,
-                    extent=L["extent"], cyc_extent=L.get("cyc", 0.0))
+                    comps_s, vary, rxn, tkey, tval,
+                    extent=L["extent"], cyc_extent=L.get("cyc", 0.0),
+                    basic_n=basic_n_s)
                 if swarn:
                     st.warning(swarn)
                 else:
@@ -596,9 +622,23 @@ if "last" in st.session_state:
                                f"{r_new:.4f}** hits "
                                f"{tkey.replace('_', ' ')} = {tval:.1f}")
                     e2 = summ2["end_values"]
+                    tav2 = total_amine_value(summ2, basic_n_s)
                     st.info(f"Resulting theory: AV {e2['acid_value']:.1f} · "
-                            f"AmV {e2['amine_value']:.1f} · OHV "
-                            f"{e2['hydroxyl_value']:.1f}")
+                            f"TAV {tav2:.1f} · AmV {e2['amine_value']:.1f} "
+                            f"· OHV {e2['hydroxyl_value']:.1f}")
+                    rws = summ2["rows"]
+                    tot_w = sum(x["g_asis"] for x in rws) or 1.0
+                    wr = pd.DataFrame({
+                        "Component": [x["name"] for x in rws],
+                        "Molar ratio": [round(x["ratio"], 4) for x in rws],
+                        "wt% (as-is)": [round(100 * x["g_asis"] / tot_w, 2)
+                                        for x in rws],
+                        "Weight parts (per 100 g)":
+                            [round(100 * x["g_asis"] / tot_w, 2)
+                             for x in rws],
+                    })
+                    st.dataframe(wr, hide_index=True,
+                                 use_container_width=True)
                     st.session_state.changelog.append(
                         f"[{date.today()}] Spec solve: {vary} ratio "
                         f"{old_r:.4f} → {r_new:.4f} for "
