@@ -522,3 +522,95 @@ def solve_ratio_for_target(components, vary_name, reaction, key, target,
     r = (lo + hi) / 2.0
     _, summary = val(r)
     return r, summary, None
+
+
+# ---------------------------------------------------------------------------
+# Imidazoline designer: monoacid (e.g. TOFA) + polyamine (e.g. DETA)
+# ---------------------------------------------------------------------------
+
+def imidazoline_species(R, p=1.0, c=1.0, mw_acid=285.0, mw_amine=103.17):
+    """Species distribution for monoacid + DETA-type polyamine.
+
+    R = acid:amine molar ratio; p = amidation conversion of the acid;
+    c = cyclization extent (fraction of acylated amine ring-closed).
+    Sequential acylation assumed (mono before di). One ring max per amine.
+
+    Returns dict of mole fractions PER MOLE AMINE, content metrics on three
+    bases, and approximate wt% of imidazoline species in the product.
+    """
+    acyl = max(0.0, R * p)            # acyl groups attached per amine
+    if acyl > 2.0:
+        acyl = 2.0                    # DETA can carry at most 2 acyls
+    mono0 = min(acyl, 1.0)
+    di = max(0.0, acyl - 1.0)
+    mono = mono0 - di
+    free = max(0.0, 1.0 - (mono + di))
+
+    acylated = mono + di
+    rings = c * acylated
+
+    species = {
+        "free_amine": free,
+        "amidoamine (mono)": mono * (1 - c),
+        "imidazoline": mono * c,
+        "diamide": di * (1 - c),
+        "amido-imidazoline": di * c,
+    }
+
+    # weight basis (per mole amine charged)
+    W = WATER_MW
+    mws = {
+        "free_amine": mw_amine,
+        "amidoamine (mono)": mw_amine + mw_acid - W,
+        "imidazoline": mw_amine + mw_acid - 2 * W,
+        "diamide": mw_amine + 2 * mw_acid - 2 * W,
+        "amido-imidazoline": mw_amine + 2 * mw_acid - 3 * W,
+    }
+    masses = {k: species[k] * mws[k] for k in species}
+    # unreacted acid mass rides along in the product
+    acid_unreacted = max(0.0, R - acyl)
+    total_mass = sum(masses.values()) + acid_unreacted * mw_acid
+    ring_mass = masses["imidazoline"] + masses["amido-imidazoline"]
+
+    return {
+        "species_per_amine": species,
+        "pct_imid_of_acylated": 100.0 * c if acylated > 0 else 0.0,
+        "pct_imid_per_amine": 100.0 * rings,
+        "wt_pct_imid_species": (100.0 * ring_mass / total_mass
+                                if total_mass else 0.0),
+        "acylated_per_amine": acylated,
+        "free_acid_per_amine": acid_unreacted,
+    }
+
+
+def solve_imidazoline(target_pct, basis, R, p=1.0,
+                      mw_acid=285.0, mw_amine=103.17):
+    """Solve cyclization extent c for a target % imidazoline at fixed R, p.
+    basis: 'acylated' (imid vs amidoamine split), 'amine' (rings per amine),
+           'weight' (wt% of ring species in product).
+    Returns (c, result_dict, warning_or_None)."""
+    T = target_pct
+    probe = imidazoline_species(R, p, 1.0, mw_acid, mw_amine)
+    ceiling = {"acylated": probe["pct_imid_of_acylated"],
+               "amine": probe["pct_imid_per_amine"],
+               "weight": probe["wt_pct_imid_species"]}[basis]
+    if T > ceiling + 1e-9:
+        need = ("raise the acid:amine ratio toward 1.0 (and/or conversion p)"
+                if basis != "acylated" else "raise conversion p")
+        return None, None, (f"Ceiling at full cyclization is {ceiling:.1f}% "
+                            f"on this basis with R = {R:g}, p = {p:g} — "
+                            f"{T:.1f}% is unreachable. To raise the ceiling, "
+                            f"{need}.")
+    lo, hi = 0.0, 1.0
+    for _ in range(80):
+        mid = (lo + hi) / 2
+        r = imidazoline_species(R, p, mid, mw_acid, mw_amine)
+        v = {"acylated": r["pct_imid_of_acylated"],
+             "amine": r["pct_imid_per_amine"],
+             "weight": r["wt_pct_imid_species"]}[basis]
+        if v < T:
+            lo = mid
+        else:
+            hi = mid
+    c = (lo + hi) / 2
+    return c, imidazoline_species(R, p, c, mw_acid, mw_amine), None

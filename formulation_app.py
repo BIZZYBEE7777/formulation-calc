@@ -251,6 +251,81 @@ if "imidazoline" in reaction:
              "SECOND water each (one ring max per polyamine molecule). "
              "Receiver water vs. prediction is your live measure of this.")
 
+# ---------------- imidazoline designer ----------------
+if "imidazoline" in reaction:
+    with st.expander("🧬 Imidazoline designer — ratio · conversion · "
+                     "cyclization → % imidazoline (and back)"):
+        st.caption("For a MONOACID (TOFA-type) + DETA-type polyamine. "
+                   "Sequential acylation, one ring per polyamine. The ratio "
+                   "sets the ceiling and species mix; **cyclization — a "
+                   "process variable (temperature, time, vacuum) — sets the "
+                   "%**. Verify against receiver water and the ~1605 cm⁻¹ "
+                   "C=N band.")
+        from formulation_core import imidazoline_species, solve_imidazoline
+        i1, i2, i3, i4 = st.columns(4)
+        with i1:
+            R_im = st.number_input("Acid : amine molar ratio", 0.05, 2.0,
+                                   1.0, 0.05, format="%.2f")
+        with i2:
+            p_im = st.number_input("Amidation conversion p", 0.50, 1.0, 1.0,
+                                   0.01, format="%.2f")
+        with i3:
+            mw_a = st.number_input("Acid MW (TOFA ≈ 285)", 50.0, 1500.0,
+                                   285.0, format="%.1f")
+        with i4:
+            mw_n = st.number_input("Amine MW (DETA 103.2)", 50.0, 500.0,
+                                   103.17, format="%.2f")
+
+        tab_fwd, tab_inv = st.tabs(["Forward: c → % imid",
+                                    "Inverse: % imid → required c"])
+        with tab_fwd:
+            c_im = st.slider("Cyclization extent c", 0.0, 1.0, 0.70, 0.01)
+            res = imidazoline_species(R_im, p_im, c_im, mw_a, mw_n)
+            f1, f2, f3 = st.columns(3)
+            f1.metric("% imid of acylated product",
+                      f"{res['pct_imid_of_acylated']:.1f}%",
+                      help="imidazoline ÷ (imidazoline + amide species)")
+            f2.metric("Rings per polyamine",
+                      f"{res['pct_imid_per_amine']:.1f}%")
+            f3.metric("wt% ring species in product",
+                      f"{res['wt_pct_imid_species']:.1f}%")
+            sp = res["species_per_amine"]
+            st.dataframe(pd.DataFrame(
+                {"Species": list(sp.keys()),
+                 "mol per mol amine": [round(v, 4) for v in sp.values()]}),
+                hide_index=True, use_container_width=True)
+            if res["free_acid_per_amine"] > 1e-6:
+                st.caption(f"Unreacted acid riding in product: "
+                           f"{res['free_acid_per_amine']:.3f} mol/mol amine.")
+        with tab_inv:
+            v1, v2, v3 = st.columns(3)
+            with v1:
+                tgt_im = st.number_input("Target % imidazoline", 1.0, 100.0,
+                                         70.0, format="%.1f")
+            with v2:
+                basis = st.selectbox("Basis", ["acylated", "amine", "weight"],
+                                     format_func={
+                                         "acylated": "of acylated product",
+                                         "amine": "rings per polyamine",
+                                         "weight": "wt% ring species"}.get)
+            with v3:
+                st.write("")
+                if st.button("Solve required cyclization"):
+                    c_req, res2, warn_im = solve_imidazoline(
+                        tgt_im, basis, R_im, p_im, mw_a, mw_n)
+                    if warn_im:
+                        st.warning(warn_im)
+                    else:
+                        st.success(f"**Required cyclization c = "
+                                   f"{c_req:.3f}** at R = {R_im:g}, "
+                                   f"p = {p_im:g}")
+                        st.info(f"At that c: {res2['pct_imid_of_acylated']:.1f}% "
+                                f"of acylated · {res2['pct_imid_per_amine']:.1f}% "
+                                f"per amine · {res2['wt_pct_imid_species']:.1f} "
+                                f"wt% — set the main cyclization slider to "
+                                f"{c_req:.2f} to see water/receiver "
+                                f"predictions for the full charge.")
+
 run = st.button("Calculate batch", type="primary", use_container_width=True)
 
 if run and len(valid):
