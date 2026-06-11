@@ -133,6 +133,99 @@ if mode.startswith("Cold blend"):
 grams_mode = mode.startswith("Grams")
 amount_label = "As-is grams" if grams_mode else "Molar ratio"
 
+# ---------------- quick spec -> ratio (standalone front door) ----------------
+if not grams_mode:
+    with st.expander("⚡ Quick spec → ratio (two components, no setup)"):
+        st.caption("Answer 'what ratio hits this spec' directly: one acid + "
+                   "one amine/alcohol, a target value, done. For multi-"
+                   "component charges use the full 🎯 solver below results.")
+        from formulation_core import (solve_ratio_for_target,
+                                      monoaddition_clone, total_amine_value)
+        q1, q2 = st.columns(2)
+        with q1:
+            st.markdown("**Acid component** (ratio fixed at 1.0)")
+            qa_name = st.text_input("Name", "TOFA", key="qa_n")
+            qa_mw = st.number_input("MW or eq. wt × f (g/mol)", 1.0, 5000.0,
+                                    285.0, format="%.1f", key="qa_mw",
+                                    help="From CoA: MW = f × 56100 / AV")
+            qa_f = st.number_input("Functionality", 1.0, 6.0, 1.0, 1.0,
+                                   key="qa_f")
+            qa_assay = st.number_input("Assay %", 1.0, 100.0, 100.0,
+                                       key="qa_a")
+        with q2:
+            st.markdown("**Co-reactant** (ratio solved)")
+            qb_name = st.text_input("Name", "DETA", key="qb_n")
+            qb_group = st.selectbox("Type", ["amine", "hydroxyl"],
+                                    key="qb_g")
+            qb_mw = st.number_input("MW (g/mol)", 1.0, 5000.0, 103.17,
+                                    format="%.2f", key="qb_mw")
+            qb_f = st.number_input("Functionality", 1.0, 6.0, 2.0, 1.0,
+                                   key="qb_f")
+            qb_assay = st.number_input("Assay %", 1.0, 100.0, 99.0,
+                                       key="qb_a")
+        q3, q4, q5, q6 = st.columns(4)
+        with q3:
+            q_tkey = st.selectbox("Target spec", [
+                "total_amine_value", "acid_value", "amine_value",
+                "hydroxyl_value"],
+                format_func=lambda s: s.replace("_", " ").title(),
+                key="q_tk")
+        with q4:
+            q_tval = st.number_input("Target (mg KOH/g)", 0.0, 1500.0,
+                                     280.0, format="%.1f", key="q_tv")
+        with q5:
+            q_p = st.number_input("Conversion p", 0.50, 1.0, 1.0, 0.01,
+                                  key="q_p")
+            q_cyc = st.number_input("Cyclization c", 0.0, 1.0, 0.70, 0.05,
+                                    key="q_c",
+                                    help="Imidazoline ring closure; 0 for "
+                                         "plain amides/esters.")
+        with q6:
+            q_bn = st.number_input("Basic N per amine", 1.0, 6.0, 3.0, 0.5,
+                                   key="q_bn", help="DETA=3, TETA=4. Used "
+                                   "for Total Amine Value only.")
+            q_mono = st.checkbox("Monoaddition", True, key="q_mono")
+        if st.button("⚡ Solve ratio", key="q_go", type="primary"):
+            qrxn = ("amidation" if qb_group == "amine"
+                    else "esterification")
+            qcomps = [
+                {"name": qa_name, "cas": "", "mw": qa_mw,
+                 "assay": qa_assay / 100.0, "functionality": qa_f,
+                 "group": "acid", "ratio": 1.0},
+                {"name": qb_name, "cas": "", "mw": qb_mw,
+                 "assay": qb_assay / 100.0, "functionality": qb_f,
+                 "group": qb_group, "ratio": 1.0},
+            ]
+            if q_mono:
+                qcomps = monoaddition_clone(qcomps)
+            q_r, q_summ, q_warn = solve_ratio_for_target(
+                qcomps, qb_name, qrxn, q_tkey, q_tval,
+                extent=q_p, cyc_extent=q_cyc, basic_n=q_bn)
+            if q_warn:
+                st.warning(q_warn)
+            else:
+                rws = q_summ["rows"]
+                tot_w = sum(x["g_asis"] for x in rws) or 1.0
+                wA, wB = rws[0]["g_asis"], rws[1]["g_asis"]
+                st.success(
+                    f"**{qa_name} : {qb_name} = 1 : {q_r:.4f} molar**  ·  "
+                    f"**{wA/wB:.3f} : 1 by weight**  "
+                    f"({100*wA/tot_w:.1f} / {100*wB/tot_w:.1f} wt%)")
+                qe = q_summ["end_values"]
+                q_tav = total_amine_value(q_summ, q_bn)
+                st.info(f"Theory at p={q_p:g}, c={q_cyc:g}: "
+                        f"AV {qe['acid_value']:.1f} · TAV {q_tav:.1f} · "
+                        f"AmV {qe['amine_value']:.1f} · "
+                        f"OHV {qe['hydroxyl_value']:.1f} · predicted water "
+                        f"{q_summ['cond']['water_g']:.1f} g per "
+                        f"{q_summ['charge_mass']:.0f} g charge")
+                st.session_state.changelog.append(
+                    f"[{date.today()}] Quick spec: {qa_name}/{qb_name} "
+                    f"{q_tkey.replace('_',' ')} {q_tval:.0f} → 1:{q_r:.4f} "
+                    f"molar ({wA/wB:.3f}:1 wt), p={q_p:g}, c={q_cyc:g}, "
+                    f"mono={q_mono}")
+
+
 st.subheader("1 · Components")
 st.caption(f"**Amount column = {amount_label}** in this mode. MW auto-fills "
            "from PubChem; enter MW manually for UVCBs (effective MW).")
