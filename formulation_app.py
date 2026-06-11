@@ -72,8 +72,36 @@ DEFAULT_ROWS = pd.DataFrame([
 
 if "table" not in st.session_state:
     st.session_state.table = DEFAULT_ROWS.copy()
+if "changelog" not in st.session_state:
+    st.session_state.changelog = []
 
 st.title("⚗️ Lab Formulation Calculator")
+
+# ---------------- save / load formulas ----------------
+with st.expander("💾 Save / load formula"):
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        fname = st.text_input("Formula name", "formula")
+        payload = json.dumps({
+            "name": fname,
+            "saved": str(date.today()),
+            "table": st.session_state.table.to_dict(orient="records"),
+            "changelog": st.session_state.changelog,
+        }, indent=1)
+        st.download_button("⬇️ Save current formula (.json)", payload,
+                           file_name=f"{fname}.json", mime="application/json")
+    with sc2:
+        up = st.file_uploader("Load a saved formula", type=["json"])
+        if up is not None and st.button("Load it"):
+            try:
+                data = json.loads(up.read().decode())
+                st.session_state.table = pd.DataFrame(data["table"])
+                st.session_state.changelog = data.get("changelog", [])
+                st.success(f"Loaded '{data.get('name','formula')}' "
+                           f"(saved {data.get('saved','?')}). ")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Couldn't load file: {e}")
 
 mode = st.radio("Mode", ["Molar ratios → batch", "Grams → ratios & theory"],
                 horizontal=True,
@@ -271,6 +299,15 @@ if "last" in st.session_state:
             new_amts, warn = adjust_to_yield(amounts, ti, new_g, absorber_idx)
             if warn:
                 st.warning(warn)
+            absorber_names = [comp_names[i] for i in absorber_idx]
+            av_note = ""
+            if out["end_values"]:
+                av_note = (f"; prior AV {out['end_values']['acid_value']:.1f}"
+                           f", OHV {out['end_values']['hydroxyl_value']:.1f}")
+            st.session_state.changelog.append(
+                f"[{date.today()}] {target}: "
+                f"{amounts[ti]:.2f} → {new_g:.2f} g; absorbed by "
+                f"{', '.join(absorber_names)}{av_note}")
             tbl = st.session_state.table.copy()
             j = 0
             for i2 in tbl.index:
@@ -281,6 +318,15 @@ if "last" in st.session_state:
             st.success("Amounts updated in the table — press "
                        "**Calculate batch** to recompute everything.")
             st.rerun()
+
+        if st.session_state.changelog:
+            with st.expander(
+                    f"📜 Change log ({len(st.session_state.changelog)})"):
+                for line in reversed(st.session_state.changelog):
+                    st.text(line)
+                if st.button("Clear change log"):
+                    st.session_state.changelog = []
+                    st.rerun()
 
     # ---------------- charge sheet ----------------
     st.subheader("6 · Charge sheet" if L["grams_mode"] else "5 · Charge sheet")
