@@ -653,3 +653,73 @@ def monoaddition_clone(components):
             c2["functionality"] = min(1.0, float(c2.get("functionality", 1)))
         out.append(c2)
     return out
+
+
+def acid_rich_mono_check(summary):
+    """Returns a warning string if a monoaddition-style result leaves
+    meaningful free acid (the regime where real cooks diacylate)."""
+    c = summary["cond"]
+    if c["acid_side"] <= 0:
+        return None
+    resid = c["residual"]["acid"]
+    if c["acid_side"] > c["nuc_side"] and resid > 0.02 * c["acid_side"]:
+        return (f"Acid-rich under monoaddition: {resid:.3f} eq of acid "
+                f"({100*resid/c['acid_side']:.0f}% of charged) is parked as "
+                f"'unreacted'. At cook temperatures excess acid diacylates "
+                f"the polyamine — consider unchecking Monoaddition for this "
+                f"charge.")
+    return None
+
+
+def solve_two_targets(components, vary_name, reaction, key1, t1, key2, t2,
+                      cyc_extent=0.0, basic_n=3.0, p_lo=0.50, p_hi=1.0):
+    """Hit TWO specs at once (e.g. acid value AND total amine value) by
+    solving a component ratio and the conversion p simultaneously.
+    Inner loop: ratio solved for key1=t1 at trial p. Outer loop: bisect p
+    until key2 hits t2. Returns (ratio, p, summary, warning_or_None)."""
+    def err_at(p):
+        r, summ, warn = solve_ratio_for_target(
+            components, vary_name, reaction, key1, t1,
+            extent=p, cyc_extent=cyc_extent, basic_n=basic_n)
+        if warn:
+            return None, None, None
+        return spec_value(summ, key2, basic_n) - t2, r, summ
+
+    # scan for a sign-change bracket
+    N = 21
+    grid = [p_lo + (p_hi - p_lo) * i / (N - 1) for i in range(N)]
+    vals = []
+    for p in grid:
+        e, r, s = err_at(p)
+        vals.append((p, e, r, s))
+    feas = [(p, e, r, s) for p, e, r, s in vals if e is not None]
+    if not feas:
+        return None, None, None, (f"No conversion in [{p_lo:g}, {p_hi:g}] "
+                                  f"can reach {key1.replace('_',' ')} = "
+                                  f"{t1:g} with this charge.")
+    bracket = None
+    for (pa, ea, _, _), (pb, eb, _, _) in zip(feas, feas[1:]):
+        if ea == 0 or ea * eb < 0:
+            bracket = (pa, ea, pb, eb)
+            break
+    if bracket is None:
+        best = min(feas, key=lambda x: abs(x[1]))
+        return None, None, None, (
+            f"Both targets can't be met together: with "
+            f"{key1.replace('_',' ')} held at {t1:g}, the closest "
+            f"{key2.replace('_',' ')} achievable is "
+            f"{t2 + best[1]:.1f} (at p = {best[0]:.3f}). Adjust one target "
+            f"or the chemistry.")
+    pa, ea, pb, eb = bracket
+    for _ in range(60):
+        pm = (pa + pb) / 2
+        em, r, s = err_at(pm)
+        if em is None:
+            break
+        if ea * em <= 0:
+            pb, eb = pm, em
+        else:
+            pa, ea = pm, em
+    p_fin = (pa + pb) / 2
+    e_fin, r_fin, s_fin = err_at(p_fin)
+    return r_fin, p_fin, s_fin, None

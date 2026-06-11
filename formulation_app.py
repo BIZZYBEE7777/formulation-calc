@@ -189,6 +189,25 @@ if not grams_mode:
                                    key="q_bn", help="DETA=3, TETA=4. Used "
                                    "for Total Amine Value only.")
             q_mono = st.checkbox("Monoaddition", True, key="q_mono")
+        q_dual = st.checkbox("Also hit a second target (solves ratio AND "
+                             "conversion p together)", False, key="q_dual")
+        if q_dual:
+            d1, d2 = st.columns(2)
+            with d1:
+                q_tkey2 = st.selectbox("Second target", [
+                    "total_amine_value", "acid_value", "amine_value",
+                    "hydroxyl_value"],
+                    index=1 if st.session_state.get("q_tk") ==
+                    "total_amine_value" else 0,
+                    format_func=lambda s: {"total_amine_value":
+                                           "Total Amine Value (titration)",
+                                           "amine_value":
+                                           "Amine Value (unreacted NH only)"}
+                    .get(s, s.replace("_", " ").title()), key="q_tk2")
+            with d2:
+                q_tval2 = st.number_input("Second target (mg KOH/g)", 0.0,
+                                          1500.0, 10.0, format="%.1f",
+                                          key="q_tv2")
         if st.button("⚡ Solve ratio", key="q_go", type="primary"):
             qrxn = ("amidation" if qb_group == "amine"
                     else "esterification")
@@ -202,9 +221,17 @@ if not grams_mode:
             ]
             if q_mono:
                 qcomps = monoaddition_clone(qcomps)
-            q_r, q_summ, q_warn = solve_ratio_for_target(
-                qcomps, qb_name, qrxn, q_tkey, q_tval,
-                extent=q_p, cyc_extent=q_cyc, basic_n=q_bn)
+            from formulation_core import (solve_two_targets,
+                                          acid_rich_mono_check)
+            q_p_used = q_p
+            if q_dual:
+                q_r, q_p_used, q_summ, q_warn = solve_two_targets(
+                    qcomps, qb_name, qrxn, q_tkey, q_tval,
+                    q_tkey2, q_tval2, cyc_extent=q_cyc, basic_n=q_bn)
+            else:
+                q_r, q_summ, q_warn = solve_ratio_for_target(
+                    qcomps, qb_name, qrxn, q_tkey, q_tval,
+                    extent=q_p, cyc_extent=q_cyc, basic_n=q_bn)
             if q_warn:
                 st.warning(q_warn)
             else:
@@ -214,10 +241,15 @@ if not grams_mode:
                 st.success(
                     f"**{qa_name} : {qb_name} = 1 : {q_r:.4f} molar**  ·  "
                     f"**{wA/wB:.3f} : 1 by weight**  "
-                    f"({100*wA/tot_w:.1f} / {100*wB/tot_w:.1f} wt%)")
+                    f"({100*wA/tot_w:.1f} / {100*wB/tot_w:.1f} wt%)" +
+                    (f"  ·  **solved p = {q_p_used:.3f}**" if q_dual else ""))
+                if q_mono:
+                    _arw = acid_rich_mono_check(q_summ)
+                    if _arw:
+                        st.warning(_arw)
                 qe = q_summ["end_values"]
                 q_tav = total_amine_value(q_summ, q_bn)
-                st.info(f"Theory at p={q_p:g}, c={q_cyc:g}: "
+                st.info(f"Theory at p={q_p_used:g}, c={q_cyc:g}: "
                         f"AV {qe['acid_value']:.1f} · TAV {q_tav:.1f} · "
                         f"AmV {qe['amine_value']:.1f} · "
                         f"OHV {qe['hydroxyl_value']:.1f} · predicted water "
@@ -550,6 +582,10 @@ if "last" in st.session_state:
 
     ev, car = out["end_values"], out["carothers"]
     if rxn != "none":
+        from formulation_core import acid_rich_mono_check as _arc
+        _w_main = _arc(out)
+        if _w_main:
+            st.warning(_w_main)
         st.subheader("4 · Stoichiometric feedback")
         f1, f2, f3, f4 = st.columns(4)
         if ev:
