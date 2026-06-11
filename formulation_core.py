@@ -253,3 +253,112 @@ def adjust_to_yield(amounts, changed_idx, new_amount, absorber_idxs):
                        f"(index {i}). Reduce the change or add absorbers.")
             new_amounts[i] = 0.0
     return new_amounts, warning
+
+
+def cold_blend_solids(rows):
+    """Cold blend (no reaction): solids = assay-corrected active grams of all
+    non-inert components; inerts are the diluent/volatile side.
+    Returns (solids_g, total_g, solids_pct)."""
+    solids = sum(r["g_active"] for r in rows if r["group"] != "inert")
+    total = sum(r["g_asis"] for r in rows)
+    return solids, total, (100.0 * solids / total if total else 0.0)
+
+
+def dilute_to_solids(amounts, rows, diluent_idx, target_pct):
+    """Adjust ONE inert diluent's as-is grams so the blend hits target %
+    solids. Solids mass is held constant; only the diluent changes.
+    Returns (new_amounts, info_or_warning)."""
+    if rows[diluent_idx]["group"] != "inert":
+        return list(amounts), "Diluent must be a component marked 'inert'."
+    if not (0 < target_pct <= 100):
+        return list(amounts), "Target % solids must be between 0 and 100."
+    solids = sum(r["g_active"] for r in rows if r["group"] != "inert")
+    if solids <= 0:
+        return list(amounts), "No non-inert solids in the formula."
+    others = sum(a for i, a in enumerate(amounts) if i != diluent_idx)
+    new_total = solids / (target_pct / 100.0)
+    new_diluent = new_total - others
+    if new_diluent < 0:
+        max_pct = 100.0 * solids / others if others else 100.0
+        return list(amounts), (f"Target unreachable by dilution alone: even "
+                               f"at zero diluent the blend is {max_pct:.1f}% "
+                               f"solids. Pick a lower target or reduce other "
+                               f"components.")
+    new_amounts = list(amounts)
+    new_amounts[diluent_idx] = new_diluent
+    return new_amounts, None
+
+
+# ---------------------------------------------------------------------------
+# Cold blend mode: weight-parts + per-ingredient % solids (no MW/chemistry)
+# ---------------------------------------------------------------------------
+
+US_FLOZ_ML = 29.5735
+BLEND_PRESETS = [("4 oz", 4 * US_FLOZ_ML), ("8 oz", 8 * US_FLOZ_ML),
+                 ("Pint (16 oz)", 16 * US_FLOZ_ML),
+                 ("Quart (32 oz)", 32 * US_FLOZ_ML),
+                 ("Gallon (128 oz)", 128 * US_FLOZ_ML),
+                 ("100 g", None), ("1 kg", None), ("1 L", 1000.0)]
+
+
+def blend_summary(parts, solids_pcts):
+    """parts = weight parts; solids_pcts = % solids of each ingredient.
+    Returns (wt_fractions, blend_solids_pct, solids_per_100g)."""
+    total = sum(parts)
+    if total <= 0:
+        return [0.0] * len(parts), 0.0, 0.0
+    wt = [p / total for p in parts]
+    blend_pct = sum(w * s for w, s in zip(wt, solids_pcts))
+    return wt, blend_pct, blend_pct  # per 100 g, grams of solids = pct value
+
+
+def blend_solve_diluent(parts, solids_pcts, diluent_idx, target_pct):
+    """Solve the diluent's parts so the blend hits target % solids.
+    Works for any diluent solids content (water=0, a 30% dispersion, etc.).
+    Returns (new_parts, warning_or_None)."""
+    s_d = solids_pcts[diluent_idx]
+    P_other = sum(p for i, p in enumerate(parts) if i != diluent_idx)
+    S_other = sum(p * s for i, (p, s) in enumerate(zip(parts, solids_pcts))
+                  if i != diluent_idx)
+    t = target_pct
+    if abs(s_d - t) < 1e-12:
+        return list(parts), ("Diluent solids equals the target — its amount "
+                             "can't move the blend toward that target.")
+    x = (t * P_other - S_other) / (s_d - t)
+    if x < 0:
+        cur = S_other / P_other if P_other else 0.0
+        direction = "below" if t < min(cur, s_d) else "above"
+        return list(parts), (f"Target unreachable with this diluent: at zero "
+                             f"{'' } diluent the blend is {cur:.1f}% solids "
+                             f"and the diluent is {s_d:.0f}% — {t:.1f}% lies "
+                             f"{direction} the reachable range.")
+    new_parts = list(parts)
+    new_parts[diluent_idx] = x
+    return new_parts, None
+
+
+def blend_batch_grams(parts, total_grams):
+    """Scale weight parts to grams for a target batch mass."""
+    total = sum(parts)
+    return [total_grams * p / total for p in parts] if total else parts
+
+
+def blend_sheet_text(names, solids_pcts, grams, batch_label, blend_pct, meta):
+    L = []
+    ap = L.append
+    ap("=" * 64)
+    ap(f"COLD BLEND CHARGE SHEET — {batch_label}")
+    ap("=" * 64)
+    ap(f"Project: {meta.get('project','____')}   Batch ID: "
+       f"{meta.get('exp_id','____')}   By: {meta.get('chemist','____')}   "
+       f"Date: {meta.get('date','')}")
+    ap("-" * 64)
+    ap(f"{'#':<3}{'Ingredient':<28}{'% solids':>9}{'grams':>10}{'  [ ] added'}")
+    for i, (n, s, g) in enumerate(zip(names, solids_pcts, grams), 1):
+        ap(f"{i:<3}{n[:27]:<28}{s:>8.1f}%{g:>10.2f}      [ ]")
+    ap("-" * 64)
+    ap(f"Total: {sum(grams):.2f} g    Blend solids: {blend_pct:.2f}%    "
+       f"Solids mass: {sum(grams)*blend_pct/100:.2f} g")
+    ap("Notes:")
+    ap("\n\n")
+    return "\n".join(L)

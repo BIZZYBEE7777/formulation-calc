@@ -19,7 +19,8 @@ import streamlit as st
 
 from formulation_core import (solve_scale, batch_summary, charge_sheet_text,
                               grams_to_ratios, weight_percents,
-                              adjust_to_yield)
+                              adjust_to_yield, cold_blend_solids,
+                              dilute_to_solids)
 
 st.set_page_config(page_title="Formulation Calculator", page_icon="⚗️",
                    layout="wide")
@@ -70,8 +71,15 @@ DEFAULT_ROWS = pd.DataFrame([
      "Amount": 1.0},
 ])
 
+DEFAULT_BLEND = pd.DataFrame([
+    {"Ingredient": "Eastek 1400", "% solids": 30.0, "Parts (by weight)": 50.0},
+    {"Ingredient": "Water", "% solids": 0.0, "Parts (by weight)": 50.0},
+])
+
 if "table" not in st.session_state:
     st.session_state.table = DEFAULT_ROWS.copy()
+if "blend_table" not in st.session_state:
+    st.session_state.blend_table = DEFAULT_BLEND.copy()
 if "changelog" not in st.session_state:
     st.session_state.changelog = []
 
@@ -86,6 +94,8 @@ with st.expander("💾 Save / load formula"):
             "name": fname,
             "saved": str(date.today()),
             "table": st.session_state.table.to_dict(orient="records"),
+            "blend_table": st.session_state.blend_table.to_dict(
+                orient="records"),
             "changelog": st.session_state.changelog,
         }, indent=1)
         st.download_button("⬇️ Save current formula (.json)", payload,
@@ -96,6 +106,9 @@ with st.expander("💾 Save / load formula"):
             try:
                 data = json.loads(up.read().decode())
                 st.session_state.table = pd.DataFrame(data["table"])
+                if "blend_table" in data:
+                    st.session_state.blend_table = pd.DataFrame(
+                        data["blend_table"])
                 st.session_state.changelog = data.get("changelog", [])
                 st.success(f"Loaded '{data.get('name','formula')}' "
                            f"(saved {data.get('saved','?')}). ")
@@ -103,11 +116,139 @@ with st.expander("💾 Save / load formula"):
             except Exception as e:
                 st.error(f"Couldn't load file: {e}")
 
-mode = st.radio("Mode", ["Molar ratios → batch", "Grams → ratios & theory"],
+mode = st.radio("Mode", ["Molar ratios → batch", "Grams → ratios & theory",
+                         "Cold blend (wt% + solids)"],
                 horizontal=True,
-                help="Forward: design a charge from ratios. Inverse: enter an "
-                     "existing formula in grams to get molar ratios, wt%, and "
-                     "all theoretical values — then modify it at constant yield.")
+                help="Forward: design a charge from ratios. Inverse: analyze "
+                     "an existing formula in grams. Cold blend: combine "
+                     "dispersions/solvents by weight parts with per-"
+                     "ingredient % solids — no MW or chemistry needed.")
+
+# ===================== COLD BLEND MODE =====================
+if mode.startswith("Cold blend"):
+    from formulation_core import (blend_summary, blend_solve_diluent,
+                                  blend_batch_grams, blend_sheet_text,
+                                  US_FLOZ_ML)
+    st.subheader("1 · Ingredients (weight parts)")
+    st.caption("Parts are relative by weight — 50/50, 2:1:1, real grams, "
+               "wt% — any consistent basis works. % solids: dispersions per "
+               "their TDS (Eastek 1400 = 30), solvents/water = 0.")
+    bt = st.data_editor(
+        st.session_state.blend_table, num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Ingredient": st.column_config.TextColumn(required=True),
+            "% solids": st.column_config.NumberColumn(min_value=0.0,
+                                                      max_value=100.0,
+                                                      format="%.1f"),
+            "Parts (by weight)": st.column_config.NumberColumn(
+                min_value=0.0, format="%.3f"),
+        }, key="blend_editor")
+    st.session_state.blend_table = bt
+
+    bvalid = bt[(bt["Ingredient"].astype(str).str.strip() != "") &
+                (bt["Parts (by weight)"] > 0)]
+    if len(bvalid):
+        names = bvalid["Ingredient"].tolist()
+        solids = [float(x) for x in bvalid["% solids"]]
+        parts = [float(x) for x in bvalid["Parts (by weight)"]]
+        wt, blend_pct, _ = blend_summary(parts, solids)
+
+        st.subheader("2 · Blend")
+        bdf = pd.DataFrame({
+            "Ingredient": names, "% solids": solids,
+            "Parts": [round(p, 3) for p in parts],
+            "wt%": [round(100 * w, 2) for w in wt],
+            "Solids contribution (per 100 g)":
+                [round(w * s, 2) for w, s in zip(wt, solids)],
+        })
+        st.dataframe(bdf, use_container_width=True, hide_index=True)
+        st.metric("Blend solids", f"{blend_pct:.2f}%")
+
+        # ---- solve diluent to target solids ----
+        st.subheader("3 · Hit a target % solids")
+        t1, t2, t3 = st.columns(3)
+        with t1:
+            dil = st.selectbox("Adjust which ingredient", names)
+        with t2:
+            tgt = st.number_input("Target % solids", min_value=0.01,
+                                  max_value=99.9, value=10.0, format="%.2f")
+        di = names.index(dil)
+        with t3:
+            st.write("")
+            if st.button("Solve & apply"):
+                new_parts, warn = blend_solve_diluent(parts, solids, di, tgt)
+                if warn:
+                    st.warning(warn)
+                else:
+                    st.session_state.changelog.append(
+                        f"[{date.today()}] Blend solids {blend_pct:.2f}% → "
+                        f"{tgt:.2f}%: {dil} {parts[di]:.3f} → "
+                        f"{new_parts[di]:.3f} parts")
+                    tbl = st.session_state.blend_table.copy()
+                    for i2 in tbl.index:
+                        nm = str(tbl.at[i2, "Ingredient"]).strip()
+                        if nm in names:
+                            tbl.at[i2, "Parts (by weight)"] = \
+                                new_parts[names.index(nm)]
+                    st.session_state.blend_table = tbl
+                    st.rerun()
+
+        # ---- batch scaling ----
+        st.subheader("4 · Scale to batch size")
+        s1, s2 = st.columns(2)
+        with s1:
+            density = st.number_input(
+                "Blend density (g/mL) — for volume sizes", min_value=0.5,
+                max_value=2.5, value=1.00, format="%.3f",
+                help="Waterborne blends are usually 1.00–1.05; check or "
+                     "measure for accuracy. Mass-based sizes ignore this.")
+        with s2:
+            custom_g = st.number_input("Custom batch (g, 0 = off)",
+                                       min_value=0.0, value=0.0,
+                                       format="%.1f")
+        sizes = [("4 oz", 4 * US_FLOZ_ML * density),
+                 ("Pint", 16 * US_FLOZ_ML * density),
+                 ("Quart", 32 * US_FLOZ_ML * density),
+                 ("Gallon", 128 * US_FLOZ_ML * density),
+                 ("100 g", 100.0), ("1 kg", 1000.0)]
+        if custom_g > 0:
+            sizes.append((f"{custom_g:.0f} g", custom_g))
+        scale_df = pd.DataFrame({"Ingredient": names, "% solids": solids})
+        for label, grams_total in sizes:
+            g = blend_batch_grams(parts, grams_total)
+            scale_df[f"{label} (g)"] = [round(x, 2) for x in g]
+        st.dataframe(scale_df, use_container_width=True, hide_index=True)
+
+        # ---- charge sheet ----
+        st.subheader("5 · Charge sheet")
+        pick = st.selectbox("Sheet for batch size",
+                            [lab for lab, _ in sizes])
+        gtot = dict(sizes)[pick]
+        h1, h2, h3 = st.columns(3)
+        meta = {"project": h1.text_input("Project code", "", key="bp"),
+                "exp_id": h2.text_input("Batch ID", "", key="be"),
+                "chemist": h3.text_input("Chemist", "", key="bc"),
+                "date": str(date.today())}
+        sheet = blend_sheet_text(names, solids,
+                                 blend_batch_grams(parts, gtot),
+                                 pick, blend_pct, meta)
+        st.code(sheet, language=None)
+        st.download_button("Download charge sheet (.txt)", sheet,
+                           file_name=f"blend_{meta['exp_id'] or 'batch'}.txt")
+
+        if st.session_state.changelog:
+            with st.expander(
+                    f"📜 Change log ({len(st.session_state.changelog)})"):
+                for line in reversed(st.session_state.changelog):
+                    st.text(line)
+
+    st.divider()
+    st.caption("Blend solids = Σ(wt% × ingredient solids). Volume sizes use "
+               "the density you enter — measure it for tight work. Planning "
+               "tool, not a CoA.")
+    st.stop()
+
 grams_mode = mode.startswith("Grams")
 amount_label = "As-is grams" if grams_mode else "Molar ratio"
 
@@ -249,6 +390,53 @@ if "last" in st.session_state:
         m2.metric("Predicted condensate", f"{out['cond']['water_g']:.2f} g H₂O")
         m3.metric("Theoretical final mass", f"{out['final_mass']:.1f} g")
         m4.metric("Theoretical solids", f"{out['solids_pct']:.1f}%")
+    else:
+        cb_s, cb_t, cb_pct = cold_blend_solids(out["rows"])
+        m2.metric("Cold blend solids", f"{cb_pct:.1f}%",
+                  help="Assay-corrected active mass of all non-inert "
+                       "components ÷ total as-is mass")
+        m3.metric("Solids mass", f"{cb_s:.1f} g")
+
+    # ---------------- dilute to % solids (cold blend, grams mode) ----------
+    if L["grams_mode"] and rxn == "none":
+        inert_names = [r["name"] for r in out["rows"] if r["group"] == "inert"]
+        st.subheader("Dilute / concentrate to target % solids")
+        if not inert_names:
+            st.caption("Mark a diluent component as 'inert' to enable this.")
+        else:
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                diluent = st.selectbox("Diluent (inert)", inert_names)
+            with d2:
+                target_pct = st.number_input("Target % solids", min_value=0.1,
+                                             max_value=100.0,
+                                             value=round(cb_pct, 1),
+                                             format="%.1f")
+            comp_names_all = [r["name"] for r in out["rows"]]
+            di = comp_names_all.index(diluent)
+            with d3:
+                st.write("")
+                if st.button("Apply dilution"):
+                    amounts = [r["g_asis"] for r in out["rows"]]
+                    new_amts, warn = dilute_to_solids(amounts, out["rows"],
+                                                      di, target_pct)
+                    if warn:
+                        st.warning(warn)
+                    else:
+                        st.session_state.changelog.append(
+                            f"[{date.today()}] Solids {cb_pct:.1f}% → "
+                            f"{target_pct:.1f}%: {diluent} "
+                            f"{amounts[di]:.2f} → {new_amts[di]:.2f} g")
+                        tbl = st.session_state.table.copy()
+                        for i2 in tbl.index:
+                            rname = str(tbl.at[i2, "Component"]).strip()
+                            if rname in comp_names_all:
+                                tbl.at[i2, "Amount"] = \
+                                    new_amts[comp_names_all.index(rname)]
+                        st.session_state.table = tbl
+                        st.success("Diluent updated — press **Calculate "
+                                   "batch** to recompute.")
+                        st.rerun()
 
     ev, car = out["end_values"], out["carothers"]
     if rxn != "none":
