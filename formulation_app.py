@@ -288,6 +288,7 @@ edited = st.data_editor(
     },
     key="editor",
 )
+st.session_state.table = edited
 
 # ---------------- materials library ----------------
 LIB_FILE = Path(__file__).parent / "materials.csv"
@@ -569,7 +570,7 @@ if "last" in st.session_state:
                             f"[{date.today()}] Solids {cb_pct:.1f}% → "
                             f"{target_pct:.1f}%: {diluent} "
                             f"{amounts[di]:.2f} → {new_amts[di]:.2f} g")
-                        tbl = st.session_state.table.copy()
+                        tbl = edited.copy()  # live editor state, not stale session copy
                         for i2 in tbl.index:
                             rname = str(tbl.at[i2, "Component"]).strip()
                             if rname in comp_names_all:
@@ -653,7 +654,7 @@ if "last" in st.session_state:
                 f"[{date.today()}] {target}: "
                 f"{amounts[ti]:.2f} → {new_g:.2f} g; absorbed by "
                 f"{', '.join(absorber_names)}{av_note}")
-            tbl = st.session_state.table.copy()
+            tbl = edited.copy()  # live editor state, not stale session copy
             j = 0
             for i2 in tbl.index:
                 rname = str(tbl.at[i2, "Component"]).strip()
@@ -803,7 +804,7 @@ if "last" in st.session_state:
                         f"[{date.today()}] Spec solve: {vary} ratio "
                         f"{old_r:.4f} → {r_new:.4f} for "
                         f"{tkey.replace('_', ' ')} {tval:.1f}")
-                    tbl = st.session_state.table.copy()
+                    tbl = edited.copy()  # live editor state, not stale session copy
                     for i2 in tbl.index:
                         if str(tbl.at[i2, "Component"]).strip() == vary:
                             tbl.at[i2, "Amount"] = r_new
