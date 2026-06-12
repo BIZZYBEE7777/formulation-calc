@@ -1,7 +1,155 @@
 Name,CAS,MW,Functionality,Assay %,Group,Notes
-Dimer acid (C18 unsatd. dimers),61788-89-4,565,2,100,acid,Effective MW - verify vs CoA acid value
-DETA (diethylenetriamine),111-40-0,103.17,2,99,amine,f=2 primary NH2 for amidation; secondary N cyclizes to imidazoline
-Maleic anhydride,108-31-6,98.06,2,100,anhydride,First ring-opening releases no water
-DCPD (dicyclopentadiene),77-73-6,132.20,1,97,capper,Addition across COOH; no water
+Acetic acid,64-19-7,60.05,1,100,acid,
+Propionic acid,79-09-4,74.08,1,100,acid,
+2-Ethylhexanoic acid,149-57-5,144.21,1,100,acid,
+Caproic acid (C6),142-62-1,116.16,1,100,acid,
+Caprylic acid (C8),124-07-2,144.21,1,100,acid,
+Capric acid (C10),334-48-5,172.26,1,100,acid,
+Lauric acid (C12),143-07-7,200.32,1,100,acid,
+Myristic acid (C14),544-63-8,228.37,1,100,acid,
+Palmitic acid (C16),57-10-3,256.42,1,100,acid,
+Stearic acid (C18),57-11-4,284.48,1,100,acid,
+Isostearic acid,2724-58-5,284.48,1,100,acid,branched C18
+Oleic acid (C18:1),112-80-1,282.46,1,100,acid,
+Linoleic acid (C18:2),60-33-3,280.45,1,100,acid,
+Linolenic acid (C18:3),463-40-1,278.43,1,100,acid,
+Ricinoleic acid,141-22-0,298.46,1,100,acid,also bears OH - note for urethane/estolide work
+Behenic acid (C22),112-85-6,340.58,1,100,acid,
+Erucic acid (C22:1),112-86-7,338.57,1,100,acid,
+Benzoic acid,65-85-0,122.12,1,100,acid,common chain stopper
+p-tert-Butylbenzoic acid,98-73-7,178.23,1,100,acid,alkyd chain stopper
+Abietic acid (rosin acid),514-10-3,302.45,1,100,acid,rosin; verify eq wt vs CoA AV
+Tall oil fatty acid (TOFA),61790-12-3,285,1,100,acid,UVCB - MW from CoA: 56100/AV (AV ~193-198)
+Coconut fatty acid,61788-47-4,212,1,100,acid,UVCB - MW from CoA AV (~260-268 typical AV)
+Soya fatty acid,68308-53-2,280,1,100,acid,UVCB - MW from CoA
+Lactic acid (88%),50-21-5,90.08,1,88,acid,hydroxy acid; OH also reacts
+12-Hydroxystearic acid,106-14-9,300.48,1,100,acid,hydroxy acid - estolides/PHS
+Acrylic acid,79-10-7,72.06,1,100,acid,vinyl - radical cure not modeled
+Methacrylic acid,79-41-4,86.09,1,100,acid,vinyl - radical cure not modeled
+Oxalic acid,144-62-7,90.03,2,100,acid,
+Malonic acid,141-82-2,104.06,2,100,acid,
+Succinic acid,110-15-6,118.09,2,100,acid,
+Glutaric acid,110-94-1,132.12,2,100,acid,
+Adipic acid,124-04-9,146.14,2,100,acid,
+Pimelic acid,111-16-0,160.17,2,100,acid,
+Suberic acid,505-48-6,174.19,2,100,acid,
+Azelaic acid,123-99-9,188.22,2,100,acid,
+Sebacic acid,111-20-6,202.25,2,100,acid,
+Dodecanedioic acid,693-23-2,230.3,2,100,acid,
+Maleic acid,110-16-7,116.07,2,100,acid,use Maleic ANHYDRIDE entry if charging anhydride
+Fumaric acid,110-17-8,116.07,2,100,acid,
+Itaconic acid,97-65-4,130.1,2,100,acid,
+Phthalic acid,88-99-3,166.13,2,100,acid,use PA anhydride entry if charging anhydride
+Isophthalic acid,121-91-5,166.13,2,100,acid,
+Terephthalic acid,100-21-0,166.13,2,100,acid,
+"1,4-Cyclohexanedicarboxylic acid",1076-97-7,172.18,2,100,acid,
+"Dimer acid (C36, distilled)",61788-89-4,565,2,100,acid,UVCB - MW from CoA: 2x56100/AV (AV ~194-198)
+Trimer acid (C54),68937-90-6,845,3,100,acid,UVCB - verify f and eq wt vs CoA
+Maleic anhydride,108-31-6,98.06,2,100,anhydride,
+Phthalic anhydride,85-44-9,148.1,2,100,anhydride,
+Succinic anhydride,108-30-5,100.07,2,100,anhydride,
+Hexahydrophthalic anhydride,85-42-7,154.16,2,100,anhydride,
+Tetrahydrophthalic anhydride,85-43-8,152.15,2,100,anhydride,
+Methylhexahydrophthalic anhydride,25550-51-0,168.19,2,100,anhydride,
+Trimellitic anhydride,552-30-7,192.13,3,100,anhydride,3 acid eq; 1 anhydride ring (model credits 1 water-free correctly)
+Dodecenylsuccinic anhydride,26544-38-7,266.38,2,100,anhydride,
+Ethylene glycol,107-21-1,62.07,2,100,hydroxyl,
+Diethylene glycol,111-46-6,106.12,2,100,hydroxyl,
+Triethylene glycol,112-27-6,150.17,2,100,hydroxyl,
 Propylene glycol,57-55-6,76.09,2,100,hydroxyl,
+Dipropylene glycol,25265-71-8,134.17,2,100,hydroxyl,
+Tripropylene glycol,24800-44-0,192.25,2,100,hydroxyl,
+"1,3-Propanediol",504-63-2,76.09,2,100,hydroxyl,
+"1,3-Butanediol",107-88-0,90.12,2,100,hydroxyl,
+"1,4-Butanediol",110-63-4,90.12,2,100,hydroxyl,
+"1,5-Pentanediol",111-29-5,104.15,2,100,hydroxyl,
+"1,6-Hexanediol",629-11-8,118.17,2,100,hydroxyl,
+"1,9-Nonanediol",3937-56-2,160.25,2,100,hydroxyl,
+"1,10-Decanediol",112-47-0,174.28,2,100,hydroxyl,
+"1,12-Dodecanediol",5675-51-4,202.33,2,100,hydroxyl,
+Neopentyl glycol,126-30-7,104.15,2,100,hydroxyl,
+"2-Methyl-1,3-propanediol (MPD)",2163-42-0,90.12,2,100,hydroxyl,
+"2-Butyl-2-ethyl-1,3-propanediol (BEPD)",115-84-4,160.25,2,100,hydroxyl,
+"2,2,4-Trimethyl-1,3-pentanediol (TMPD)",144-19-4,146.23,2,100,hydroxyl,
+"1,4-Cyclohexanedimethanol (CHDM)",105-08-8,144.21,2,100,hydroxyl,
+Hydrogenated bisphenol A,80-04-6,240.38,2,100,hydroxyl,
+PEG 200,25322-68-3,200,2,100,hydroxyl,nominal MW - use CoA OHV
+PEG 400,25322-68-3,400,2,100,hydroxyl,nominal MW - use CoA OHV
+PEG 600,25322-68-3,600,2,100,hydroxyl,nominal MW - use CoA OHV
+PPG 425,25322-69-4,425,2,100,hydroxyl,nominal - use CoA OHV
+PPG 1000,25322-69-4,1000,2,100,hydroxyl,nominal - use CoA OHV
+PPG 2000,25322-69-4,2000,2,100,hydroxyl,nominal - use CoA OHV
+PTMEG 650,25190-06-1,650,2,100,hydroxyl,nominal - use CoA OHV
+PTMEG 1000,25190-06-1,1000,2,100,hydroxyl,nominal - use CoA OHV
+PTMEG 2000,25190-06-1,2000,2,100,hydroxyl,nominal - use CoA OHV
+Glycerol,56-81-5,92.09,3,100,hydroxyl,
+Trimethylolpropane (TMP),77-99-6,134.17,3,100,hydroxyl,
+Trimethylolethane (TME),77-85-0,120.15,3,100,hydroxyl,
+Pentaerythritol,115-77-5,136.15,4,100,hydroxyl,
+Dipentaerythritol,126-58-9,254.28,6,100,hydroxyl,
+Di-trimethylolpropane,23235-61-2,250.33,4,100,hydroxyl,
+Sorbitol,50-70-4,182.17,6,100,hydroxyl,
+Castor oil,8001-79-4,932,2.7,100,hydroxyl,f ~2.7 OH; verify vs CoA OHV (~160-168)
+Isosorbide,652-67-5,146.14,2,100,hydroxyl,bio-based diol
+n-Butanol,71-36-3,74.12,1,100,hydroxyl,mono-ol chain stopper
+2-Ethylhexanol,104-76-7,130.23,1,100,hydroxyl,mono-ol
+Benzyl alcohol,100-51-6,108.14,1,100,hydroxyl,mono-ol
+Lauryl alcohol (C12),112-53-8,186.34,1,100,hydroxyl,
+Stearyl alcohol (C18),112-92-5,270.49,1,100,hydroxyl,
+Oleyl alcohol,143-28-2,268.48,1,100,hydroxyl,
+2-Hydroxyethyl acrylate (HEA),818-61-1,116.12,1,100,hydroxyl,OH reacts; acrylate is radical-cure
+2-Hydroxyethyl methacrylate (HEMA),868-77-9,130.14,1,100,hydroxyl,OH reacts; methacrylate is radical-cure
+Hydroxypropyl acrylate (HPA),25584-83-2,130.14,1,100,hydroxyl,
+Hydroxypropyl methacrylate (HPMA),27813-02-1,144.17,1,100,hydroxyl,
+Caprolactone (monomer),502-44-3,114.14,1,100,hydroxyl,ring-opens onto OH; no water - treat case-by-case
+Dicyclopentadiene (DCPD),77-73-6,132.2,1,97,capper,addition across COOH; no water
+Allyl alcohol,107-18-6,58.08,1,100,hydroxyl,
+Ethylenediamine (EDA),107-15-3,60.1,2,100,amine,basic N = 2
+Diethylenetriamine (DETA),111-40-0,103.17,2,99,amine,f=2 primary NH2; basic N = 3; cyclizes to imidazoline
+Triethylenetetramine (TETA),112-24-3,146.23,2,97,amine,f=2 primary; basic N = 4; verify CoA - commercial TETA is a mix
+Tetraethylenepentamine (TEPA),112-57-2,189.3,2,95,amine,basic N = 5; commercial mix - use CoA
+Aminoethylethanolamine (AEEA),111-41-1,104.15,1,100,amine,1 primary NH2 + OH; basic N = 2; hydroxy-imidazolines
+Aminoethylpiperazine (AEP),140-31-8,129.2,1,100,amine,1 primary; basic N = 3
+Piperazine,110-85-0,86.14,2,100,amine,2 secondary NH; basic N = 2; no imidazoline (no ring path)
+Hexamethylenediamine,124-09-4,116.21,2,100,amine,basic N = 2
+Isophoronediamine (IPDA),2855-13-2,170.3,2,100,amine,
+m-Xylylenediamine (MXDA),1477-55-0,136.19,2,100,amine,
+"1,3-BAC (cyclohexanedimethanamine)",2579-20-6,142.24,2,100,amine,
+Monoethanolamine (MEA),141-43-5,61.08,1,100,amine,NH2 + OH; alkanolamides; basic N = 1
+Diethanolamine (DEA),111-42-2,105.14,1,100,amine,secondary NH + 2 OH; DEA-amides; basic N = 1
+Triethanolamine (TEA),102-71-6,149.19,3,100,hydroxyl,"3 OH, tertiary N (basic, non-reactive to acid) - esterifies as triol"
+Dimethylaminopropylamine (DMAPA),109-55-7,102.18,1,100,amine,1 primary; tertiary N; amidoamines/betaine precursors; basic N = 2
+Morpholine,110-91-8,87.12,1,100,amine,secondary; basic N = 1
+Cyclohexylamine,108-91-8,99.17,1,100,amine,
+Benzylamine,100-46-9,107.15,1,100,amine,
+Oleylamine,112-90-3,267.49,1,100,amine,fatty primary amine
+Cocoamine,61788-46-3,200,1,100,amine,UVCB - MW from CoA
+Tallowamine (hydrogenated),61788-45-2,268,1,100,amine,UVCB - MW from CoA
+"MDI (4,4'-)",101-68-8,250.25,2,100,acid,NCO - enter as 'acid' to pair eq vs OH for NCO:OH index; urethane is ADDITION: ignore/zero the water prediction
+Polymeric MDI,9016-87-9,365,2.7,100,acid,NCO - enter as 'acid' to pair eq vs OH for NCO:OH index; urethane is ADDITION: ignore/zero the water prediction; f and eq wt from CoA (%NCO ~31)
+TDI 80/20,26471-62-5,174.16,2,100,acid,NCO - enter as 'acid' to pair eq vs OH for NCO:OH index; urethane is ADDITION: ignore/zero the water prediction
+HDI (monomer),822-06-0,168.19,2,100,acid,NCO - enter as 'acid' to pair eq vs OH for NCO:OH index; urethane is ADDITION: ignore/zero the water prediction
+HDI isocyanurate trimer,28182-81-2,504.6,3,100,acid,NCO - enter as 'acid' to pair eq vs OH for NCO:OH index; urethane is ADDITION: ignore/zero the water prediction; nominal - use CoA %NCO (~21.8)
+IPDI,4098-71-9,222.28,2,100,acid,NCO - enter as 'acid' to pair eq vs OH for NCO:OH index; urethane is ADDITION: ignore/zero the water prediction
+H12MDI,5124-30-1,262.35,2,100,acid,NCO - enter as 'acid' to pair eq vs OH for NCO:OH index; urethane is ADDITION: ignore/zero the water prediction
+Styrene,100-42-5,104.15,0,100,inert,UPR reactive diluent; vinyl monomer - radical cure not modeled; inert for charge math
+Vinyl toluene,25013-15-4,118.18,0,100,inert,vinyl monomer - radical cure not modeled; inert for charge math
+Methyl methacrylate (MMA),80-62-6,100.12,0,100,inert,vinyl monomer - radical cure not modeled; inert for charge math
+Butyl acrylate,141-32-2,128.17,0,100,inert,vinyl monomer - radical cure not modeled; inert for charge math
+2-Ethylhexyl acrylate,103-11-7,184.28,0,100,inert,vinyl monomer - radical cure not modeled; inert for charge math
+"HDDA (1,6-hexanediol diacrylate)",13048-33-4,226.27,0,100,inert,UV crosslinker; vinyl monomer - radical cure not modeled; inert for charge math
+TPGDA,42978-66-5,300.35,0,100,inert,UV diluent; vinyl monomer - radical cure not modeled; inert for charge math
+TMPTA,15625-89-5,296.32,0,100,inert,UV crosslinker; vinyl monomer - radical cure not modeled; inert for charge math
 Water,7732-18-5,18.02,0,100,inert,
+Xylene (mixed),1330-20-7,106.17,0,100,inert,
+Toluene,108-88-3,92.14,0,100,inert,
+Acetone,67-64-1,58.08,0,100,inert,
+MEK,78-93-3,72.11,0,100,inert,
+MIBK,108-10-1,100.16,0,100,inert,
+n-Butyl acetate,123-86-4,116.16,0,100,inert,
+PM acetate (PMA),108-65-6,132.16,0,100,inert,
+Aromatic 100,64742-95-6,120,0,100,inert,UVCB solvent
+Aromatic 150,64742-94-5,134,0,100,inert,UVCB solvent
+Mineral spirits,64742-88-7,144,0,100,inert,UVCB solvent
+Isopropanol,67-63-0,60.1,0,100,inert,mono-ol; mark hydroxyl f=1 if intentionally esterifying
+Ethanol (denatured),64-17-5,46.07,0,100,inert,same note as IPA
