@@ -288,7 +288,6 @@ edited = st.data_editor(
     },
     key="editor",
 )
-st.session_state.table = edited
 
 # ---------------- materials library ----------------
 LIB_FILE = Path(__file__).parent / "materials.csv"
