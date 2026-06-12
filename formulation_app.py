@@ -76,8 +76,24 @@ DEFAULT_BLEND = pd.DataFrame([
     {"Ingredient": "Water", "% solids": 0.0, "Parts (by weight)": 50.0},
 ])
 
+NUM_COLS = ["MW (g/mol)", "Assay %", "Functionality", "Amount"]
+
+def _stabilize(df):
+    """Lock column dtypes so Streamlit's data-diff never sees phantom
+    changes (dtype flips between object/float reset editor state)."""
+    df = df.copy()
+    for c in NUM_COLS:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    for c in df.columns:
+        if c not in NUM_COLS:
+            df[c] = df[c].fillna("").astype(str)
+    return df
+
 if "table" not in st.session_state:
-    st.session_state.table = DEFAULT_ROWS.copy()
+    st.session_state.table = _stabilize(DEFAULT_ROWS.copy())
+if "tbl_ver" not in st.session_state:
+    st.session_state.tbl_ver = 0
 if "blend_table" not in st.session_state:
     st.session_state.blend_table = DEFAULT_BLEND.copy()
 if "changelog" not in st.session_state:
@@ -105,7 +121,9 @@ with st.expander("💾 Save / load formula"):
         if up is not None and st.button("Load it"):
             try:
                 data = json.loads(up.read().decode())
-                st.session_state.table = pd.DataFrame(data["table"])
+                st.session_state.table = _stabilize(
+                    pd.DataFrame(data["table"]))
+                st.session_state.tbl_ver += 1
                 if "blend_table" in data:
                     st.session_state.blend_table = pd.DataFrame(
                         data["blend_table"])
@@ -286,7 +304,7 @@ edited = st.data_editor(
         "Amount": st.column_config.NumberColumn(
             label=amount_label, min_value=0.0, format="%.4f"),
     },
-    key="editor",
+    key=f"editor_v{st.session_state.tbl_ver}",
 )
 
 # ---------------- materials library ----------------
@@ -312,9 +330,10 @@ if LIB_FILE.exists():
                     "Group": (row.get("Group") or "acid").strip().lower(),
                     "Amount": 1.0,
                 }
-                st.session_state.table = pd.concat(
+                st.session_state.table = _stabilize(pd.concat(
                     [st.session_state.table, pd.DataFrame([new_row])],
-                    ignore_index=True)
+                    ignore_index=True))
+                st.session_state.tbl_ver += 1
                 st.rerun()
     except Exception as e:
         st.warning(f"materials.csv found but unreadable: {e}")
@@ -334,7 +353,8 @@ if st.button("🔎 Fill missing MWs from PubChem"):
                 st.toast(f"{ident}: {mw:.2f} g/mol ({formula})")
             else:
                 misses.append(ident)
-    st.session_state.table = edited
+    st.session_state.table = _stabilize(edited)
+    st.session_state.tbl_ver += 1
     if misses:
         st.warning(f"No PubChem match for: {', '.join(misses)} — enter MW "
                    "manually (typical for UVCBs).")
@@ -575,7 +595,8 @@ if "last" in st.session_state:
                             if rname in comp_names_all:
                                 tbl.at[i2, "Amount"] = \
                                     new_amts[comp_names_all.index(rname)]
-                        st.session_state.table = tbl
+                        st.session_state.table = _stabilize(tbl)
+                        st.session_state.tbl_ver += 1
                         st.success("Diluent updated — press **Calculate "
                                    "batch** to recompute.")
                         st.rerun()
@@ -659,7 +680,8 @@ if "last" in st.session_state:
                 rname = str(tbl.at[i2, "Component"]).strip()
                 if rname in comp_names:
                     tbl.at[i2, "Amount"] = new_amts[comp_names.index(rname)]
-            st.session_state.table = tbl
+            st.session_state.table = _stabilize(tbl)
+            st.session_state.tbl_ver += 1
             st.success("Amounts updated in the table — press "
                        "**Calculate batch** to recompute everything.")
             st.rerun()
@@ -807,7 +829,8 @@ if "last" in st.session_state:
                     for i2 in tbl.index:
                         if str(tbl.at[i2, "Component"]).strip() == vary:
                             tbl.at[i2, "Amount"] = r_new
-                    st.session_state.table = tbl
+                    st.session_state.table = _stabilize(tbl)
+                    st.session_state.tbl_ver += 1
                     st.caption("Ratio written to the table — press "
                                "**Calculate batch** to refresh all numbers.")
 

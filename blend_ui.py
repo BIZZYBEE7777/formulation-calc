@@ -38,6 +38,8 @@ def render():
         st.session_state.blend_table = DEFAULT_PARTS.copy()
     if "blend_result" not in st.session_state:
         st.session_state.blend_result = None
+    if "blend_ver" not in st.session_state:
+        st.session_state.blend_ver = 0
 
     method = st.radio("Blend input", ["Solve from constraints", "Known parts"],
                       horizontal=True,
@@ -68,8 +70,7 @@ def render():
                     options=list(ROLE_MAP.keys())),
                 "Value": st.column_config.NumberColumn(min_value=0.0,
                                                        format="%.3f"),
-            }, key="spec_editor")
-        st.session_state.blend_specs = spec_df
+            }, key=f"spec_editor_v{st.session_state.blend_ver}")
 
         tcol, bcol = st.columns([1, 2])
         with tcol:
@@ -119,8 +120,7 @@ def render():
                     min_value=0.0, max_value=100.0, format="%.1f"),
                 "Parts (by weight)": st.column_config.NumberColumn(
                     min_value=0.0, format="%.3f"),
-            }, key="blend_editor")
-        st.session_state.blend_table = bt
+            }, key=f"blend_editor_v{st.session_state.blend_ver}")
         bv = bt[(bt["Ingredient"].astype(str).str.strip() != "") &
                 (bt["Parts (by weight)"].fillna(0) > 0)]
         if len(bv):
@@ -175,6 +175,7 @@ def render():
                             tbl.at[i2, "Parts (by weight)"] = \
                                 new_parts[names.index(nm)]
                     st.session_state.blend_table = tbl
+                    st.session_state.blend_ver += 1
                     st.rerun()
 
     # ---------------- batch scaling ----------------
