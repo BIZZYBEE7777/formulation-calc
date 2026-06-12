@@ -101,6 +101,20 @@ if "changelog" not in st.session_state:
 
 st.title("⚗️ Lab Formulation Calculator")
 
+# ---------------- new / reset ----------------
+tc1, tc2 = st.columns([5, 1])
+with tc2:
+    if st.button("🆕 New formula", help="Clear all tables and results and "
+                 "start fresh. Save first if you want to keep this one!"):
+        st.session_state.table = _stabilize(DEFAULT_ROWS.copy())
+        st.session_state.blend_table = DEFAULT_BLEND.copy()
+        for k in ("last", "blend_result", "blend_specs"):
+            st.session_state.pop(k, None)
+        st.session_state.changelog = []
+        st.session_state.tbl_ver += 1
+        st.session_state.blend_ver = st.session_state.get("blend_ver", 0) + 1
+        st.rerun()
+
 # ---------------- save / load formulas ----------------
 with st.expander("💾 Save / load formula"):
     sc1, sc2 = st.columns(2)
