@@ -17,6 +17,7 @@ Reaction types supported for condensation accounting:
   'urethane'       isocyanate + OH   -> carbamate (ADDITION, no byproduct)
   'none'           no condensation math
 """
+import math
 
 WATER_MW = 18.015
 KOH_MW_MG = 56100.0  # mg KOH per equivalent, for AV/AmV/OHV
@@ -1052,3 +1053,96 @@ def unsaturation_stats(summary):
     return {"cc_moles": cc,
             "cc_eq_weight": (resin / cc if cc > 0 else float("inf")),
             "mmol_per_g": (1000.0 * cc / resin if resin > 0 else 0.0)}
+
+
+# ---------------------------------------------------------------------------
+# Empirical correlations (family-module support; NOT step-growth theory).
+# Least-squares fits to the USER'S OWN cook data — resin-specific, not
+# transferable. The UI must label these as empirical fits.
+# ---------------------------------------------------------------------------
+
+# Two-sided Student-t critical values (avoids a SciPy dependency on the
+# Streamlit Cloud free tier). Keyed by confidence then degrees of freedom.
+_T_CRIT = {
+    0.95: {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447,
+           7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179,
+           13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101,
+           19: 2.093, 20: 2.086, 21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064,
+           25: 2.060, 26: 2.056, 27: 2.052, 28: 2.048, 29: 2.045, 30: 2.042},
+    0.90: {1: 6.314, 2: 2.920, 3: 2.353, 4: 2.132, 5: 2.015, 6: 1.943,
+           7: 1.895, 8: 1.860, 9: 1.833, 10: 1.812, 11: 1.796, 12: 1.782,
+           13: 1.771, 14: 1.761, 15: 1.753, 16: 1.746, 17: 1.740, 18: 1.734,
+           19: 1.729, 20: 1.725, 21: 1.721, 22: 1.717, 23: 1.714, 24: 1.711,
+           25: 1.708, 26: 1.706, 27: 1.703, 28: 1.701, 29: 1.699, 30: 1.697},
+}
+_T_INF = {0.95: 1.960, 0.90: 1.645}
+
+
+def _t_crit(df, confidence=0.95):
+    table = _T_CRIT.get(confidence, _T_CRIT[0.95])
+    if df <= 0:
+        return float("inf")
+    return table.get(df, _T_INF.get(confidence, 1.960))  # df > 30 -> normal
+
+
+def fit_log_viscosity_ohv(points):
+    """Least-squares fit of ln(viscosity) = a*OHV + b to the user's own
+    (OHV, viscosity) cook data at a fixed temperature. Empirical and
+    resin-specific — NOT transferable to another formula.
+
+    points: iterable of (ohv, viscosity) pairs; viscosity in any consistent
+    unit, viscosity > 0. Returns
+      {a, b, r2, n, s, xbar, Sxx, warning}   (s = residual std error, ln units)
+    or {warning: ...} if it cannot fit (needs >= 3 points spanning >1 OHV)."""
+    pts = [(float(o), float(v)) for o, v in points
+           if o is not None and v is not None and float(v) > 0]
+    n = len(pts)
+    if n < 3:
+        return {"warning": f"Need at least 3 (OHV, viscosity) points to fit "
+                           f"(have {n}); viscosity must be > 0."}
+    xs = [o for o, _ in pts]
+    ys = [math.log(v) for _, v in pts]
+    xbar = sum(xs) / n
+    ybar = sum(ys) / n
+    Sxx = sum((x - xbar) ** 2 for x in xs)
+    if Sxx <= 0:
+        return {"warning": "All points share one OHV — vary OHV to fit a line."}
+    a = sum((x - xbar) * (y - ybar) for x, y in zip(xs, ys)) / Sxx
+    b = ybar - a * xbar
+    ss_res = sum((y - (a * x + b)) ** 2 for x, y in zip(xs, ys))
+    ss_tot = sum((y - ybar) ** 2 for y in ys)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    s = math.sqrt(ss_res / (n - 2)) if n > 2 else float("inf")
+    warn = None
+    if n < 6:
+        warn = f"Only {n} points — fit is weak; add more for a reliable curve."
+    elif r2 < 0.95:
+        warn = (f"R² = {r2:.3f} (< 0.95) — the relationship is noisy; "
+                f"treat the predicted OHV as indicative only.")
+    return {"a": a, "b": b, "r2": r2, "n": n, "s": s, "xbar": xbar,
+            "Sxx": Sxx, "warning": warn}
+
+
+def predict_ohv_from_viscosity(fit, viscosity, confidence=0.95):
+    """Inverse-predict OHV from a measured viscosity using a calibration fit
+    from fit_log_viscosity_ohv. Returns {ohv, lo, hi, half_width, confidence}
+    with the standard inverse-prediction (calibration) interval [Draper & Smith,
+    Applied Regression Analysis], or {warning: ...}.
+
+    The interval is the linear-approximation form, valid when the slope is
+    well-determined — which the fit's R² >= 0.95 / >= 6-point guidance enforces.
+    It widens away from the calibration mean, as it should."""
+    if "a" not in fit:
+        return {"warning": "No valid fit yet."}
+    if viscosity is None or viscosity <= 0:
+        return {"warning": "Enter a measured viscosity > 0."}
+    a, b, s, n = fit["a"], fit["b"], fit["s"], fit["n"]
+    if a == 0:
+        return {"warning": "Fit slope is zero — viscosity does not track OHV."}
+    x0 = (math.log(viscosity) - b) / a          # predicted OHV
+    t = _t_crit(n - 2, confidence)
+    se = (s / abs(a)) * math.sqrt(1 + 1.0 / n
+                                  + (x0 - fit["xbar"]) ** 2 / fit["Sxx"])
+    half = t * se
+    return {"ohv": x0, "lo": x0 - half, "hi": x0 + half,
+            "half_width": half, "confidence": confidence}

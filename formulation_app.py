@@ -78,7 +78,7 @@ FAMILIES = {
     "Alkyd": {
         "mode": MODE_MOLAR, "reaction": RXN_ESTER,
         "expand": ["quick_spec", "spec_solver"],
-        "oil_length": True, "gel_point": True,
+        "oil_length": True, "gel_point": True, "viscosity_ohv": True,
         "seed": "demo_4_longoil_alkyd.json",
         "blurb": "Ratios → batch, esterification. Oil length and AV/OHV end "
                  "values surfaced. Same engine as every family — this just "
@@ -262,11 +262,13 @@ with tc2:
                  "start fresh. Save first if you want to keep this one!"):
         st.session_state.table = _stabilize(DEFAULT_ROWS.copy())
         st.session_state.blend_table = DEFAULT_BLEND.copy()
-        for k in ("last", "blend_result", "blend_specs"):
+        for k in ("last", "blend_result", "blend_specs", "visc_cal"):
             st.session_state.pop(k, None)
         st.session_state.changelog = []
         st.session_state.tbl_ver += 1
         st.session_state.blend_ver = st.session_state.get("blend_ver", 0) + 1
+        st.session_state.visc_cal_ver = \
+            st.session_state.get("visc_cal_ver", 0) + 1
         st.rerun()
 
 # ---------------- save / load formulas ----------------
@@ -274,14 +276,19 @@ with st.expander("💾 Save / load formula"):
     sc1, sc2 = st.columns(2)
     with sc1:
         fname = st.text_input("Formula name", "formula")
-        payload = json.dumps({
+        _payload = {
             "name": fname,
             "saved": str(date.today()),
             "table": st.session_state.table.to_dict(orient="records"),
             "blend_table": st.session_state.blend_table.to_dict(
                 orient="records"),
             "changelog": st.session_state.changelog,
-        }, indent=1)
+        }
+        # viscosity/OHV calibration points (alkyd/ester) — pinned via the tool
+        if "visc_cal" in st.session_state:
+            _payload["visc_cal"] = st.session_state.visc_cal.to_dict(
+                orient="records")
+        payload = json.dumps(_payload, indent=1)
         st.download_button("⬇️ Save current formula (.json)", payload,
                            file_name=f"{fname}.json", mime="application/json")
     with sc2:
@@ -295,6 +302,10 @@ with st.expander("💾 Save / load formula"):
                 if "blend_table" in data:
                     st.session_state.blend_table = pd.DataFrame(
                         data["blend_table"])
+                if "visc_cal" in data:
+                    st.session_state.visc_cal = pd.DataFrame(data["visc_cal"])
+                    st.session_state.visc_cal_ver = \
+                        st.session_state.get("visc_cal_ver", 0) + 1
                 st.session_state.changelog = data.get("changelog", [])
                 st.success(f"Loaded '{data.get('name','formula')}' "
                            f"(saved {data.get('saved','?')}). ")
@@ -893,68 +904,16 @@ if "last" in st.session_state:
                           help="Charged NCO ÷ OH × 100. 100 = stoichiometric; "
                                ">100 NCO-rich / NCO-terminated.")
 
-        # ---- alkyd oil length (family-gated) ----
+        # ---- post-engine family analysis (separate module; see analysis_ui) --
+        import analysis_ui
         if _fam_tool("oil_length"):
-            from formulation_core import oil_length as _oil_length
-            st.markdown("**Oil length**")
-            oil_names = st.multiselect(
-                "Tag the oil / fatty-acid component(s)",
-                [r["name"] for r in out["rows"]], key="oil_tag",
-                help="Oil length = active wt of the tagged rows ÷ theoretical "
-                     "resin solids × 100. NB: classic oil length is on a "
-                     "triglyceride-oil basis; this is the charged-active-"
-                     "weight ratio of whatever you tag.")
-            if oil_names:
-                ol = _oil_length(out, oil_names)
-                bucket = ("short" if ol < 45 else
-                          "medium" if ol < 60 else "long")
-                st.metric("Oil length", f"{ol:.1f}%",
-                          help="<45 short · 45–60 medium · >60 long oil")
-                st.caption(f"Tagged active ÷ resin solids → {bucket} oil "
-                           f"(by charged active weight).")
-
-        # ---- Carothers gel point (family-gated, branched systems) ----
+            analysis_ui.render_oil_length(out)
         if _fam_tool("gel_point"):
-            from formulation_core import gel_point_carothers as _gp
-            g = _gp(out)
-            if g["p_gel"] is not None:
-                st.metric("Carothers gel point",
-                          f"p_gel ≈ {g['p_gel']:.3f}",
-                          delta=f"f_avg {g['f_avg']:.2f}", delta_color="off",
-                          help="Branched step-growth gels at p ≈ 2/f_avg "
-                               "(Carothers; over-predicts vs the Flory "
-                               "statistical treatment). Assumes equal "
-                               "reactivity & balanced stoichiometry.")
-                if L["extent"] >= g["p_gel"]:
-                    st.warning(f"⚠️ Conversion p = {L['extent']:.3f} is at or "
-                               f"past the Carothers gel point "
-                               f"({g['p_gel']:.3f}) — expect gelation.")
-            else:
-                st.caption(f"Average functionality f_avg = {g['f_avg']:.2f} "
-                           f"≤ 2 → linear, no Carothers gel point.")
-
-        # ---- reactive unsaturation (family-gated; radical-cure resins) ----
+            analysis_ui.render_gel_point(out, L["extent"])
         if _fam_tool("unsaturation"):
-            from formulation_core import unsaturation_stats as _us
-            u = _us(out)
-            if u["cc_moles"] > 0:
-                uu1, uu2 = st.columns(2)
-                eqw = ("∞" if u["cc_eq_weight"] == float("inf")
-                       else f"{u['cc_eq_weight']:.0f} g/mol")
-                uu1.metric("C=C equivalent weight", eqw,
-                           help="Resin solids per mole of reactive C=C. Lower "
-                                "= more unsaturation = higher crosslink-density "
-                                "potential.")
-                uu2.metric("Unsaturation", f"{u['mmol_per_g']:.2f} mmol C=C/g",
-                           help="= mol C=C per kg resin. A backbone count for "
-                                "peroxide / UV radical cure — NOT a cure, gel "
-                                "time or exotherm prediction (those are "
-                                "kinetic / measured).")
-            else:
-                st.caption("Set the **C=C / mol** column on the unsaturated "
-                           "monomer(s) (maleic/fumaric ≈ 1, acrylate per "
-                           "double bond) to see C=C equivalent weight and "
-                           "unsaturation per kg.")
+            analysis_ui.render_unsaturation(out)
+        if _fam_tool("viscosity_ohv"):
+            analysis_ui.render_viscosity_ohv()
 
     # ---------------- adjust to yield (grams mode) ----------------
     if L["grams_mode"]:
