@@ -35,13 +35,20 @@ st.set_page_config(page_title="Formulation Calculator", page_icon="⚗️",
 MODE_MOLAR = "Molar ratios → batch"
 MODE_GRAMS = "Grams → ratios & theory"
 MODE_BLEND = "Cold blend (wt% + solids)"
-MODE_QA = "QA / QC tools"
 MODE_URETHANE = "2K urethane"
-MODE_OPTS = [MODE_MOLAR, MODE_GRAMS, MODE_BLEND, MODE_QA, MODE_URETHANE]
+MODE_OPTS = [MODE_MOLAR, MODE_GRAMS, MODE_BLEND, MODE_URETHANE]
 
 # Mode -> module to dispatch to (registry; extend with one line per new tab).
-MODE_DISPATCH = {MODE_BLEND: "blend_ui", MODE_QA: "qa_ui",
-                 MODE_URETHANE: "urethane_ui"}
+# QA tools are NOT here — they are top-level sidebar workspaces (see below) so
+# QA techs get a one-click, uncluttered path with only their tool's controls.
+MODE_DISPATCH = {MODE_BLEND: "blend_ui", MODE_URETHANE: "urethane_ui"}
+
+# Top-level sidebar workspaces. Resin design = the full formulation tool;
+# the two QA entries route straight to a single standalone QA calculator.
+WS_DESIGN = "🧪 Resin design"
+WS_QA_SOLIDS = "🧫 QA — % Solids"
+WS_QA_PH = "⚗️ QA — pH adjust"
+WORKSPACES = [WS_DESIGN, WS_QA_SOLIDS, WS_QA_PH]
 
 # Reaction selectbox labels (the engine reaction is mapped from these below).
 RXN_NONE = "none"
@@ -200,6 +207,54 @@ if "changelog" not in st.session_state:
 
 st.title("⚗️ Lab Formulation Calculator")
 
+
+def _collapse_sidebar():
+    """Best-effort one-shot sidebar collapse after a navigation choice.
+    Streamlit has no official 'collapse now' API, so this clicks the native
+    collapse control via the parent DOM. If a future Streamlit renames the
+    control it simply no-ops (sidebar stays open) — no functional breakage."""
+    import streamlit.components.v1 as components
+    components.html(
+        """
+        <script>
+        const doc = window.parent.document;
+        const sel = ['[data-testid="stSidebarCollapseButton"] button',
+                     '[data-testid="stSidebarCollapseButton"]',
+                     '[data-testid="baseButton-headerNoPadding"]',
+                     'button[kind="header"]'];
+        for (const s of sel) {
+            const el = doc.querySelector(s);
+            if (el) { el.click(); break; }
+        }
+        </script>
+        """, height=0, width=0)
+
+
+# First render? (Don't auto-collapse on startup — the sidebar must be open so
+# techs can make their first choice. Only collapse on later user changes.)
+_was_init = st.session_state.get("_app_initialized", False)
+st.session_state._app_initialized = True
+
+# ---------------- top-level workspace nav (sidebar) ----------------
+workspace = st.sidebar.radio(
+    "Tool", WORKSPACES, key="workspace",
+    help="Resin design = the full formulation tool. The two QA entries are "
+         "standalone bench calculators — pick one and you get only its "
+         "controls.")
+# Collapse the sidebar once, right after a navigation change (matches the
+# manual habit of closing it after choosing). One-shot: re-opening sticks.
+if st.session_state.get("_last_workspace") != workspace:
+    st.session_state._last_workspace = workspace
+    if _was_init:
+        _collapse_sidebar()
+
+# QA workspaces route straight to a single, uncluttered QA tool and stop —
+# no resin-design controls (new/reset, save/load, family, modes) are shown.
+if workspace in (WS_QA_SOLIDS, WS_QA_PH):
+    import qa_ui
+    qa_ui.render(section="solids" if workspace == WS_QA_SOLIDS else "ph")
+    st.stop()
+
 # ---------------- new / reset ----------------
 tc1, tc2 = st.columns([5, 1])
 with tc2:
@@ -258,11 +313,14 @@ F = FAMILIES[fam]
 # On a CHANGE of family, preselect mode + reaction ONCE (not re-forced every
 # rerun) so a later manual change by the user sticks — soft, not locked.
 if st.session_state.get("_last_family") != fam:
+    _fam_changed = "_last_family" in st.session_state
     st.session_state._last_family = fam
     if F["mode"] is not None:
         st.session_state.mode_radio = F["mode"]
     if F["reaction"] is not None:
         st.session_state.reaction_select = F["reaction"]
+    if _fam_changed and _was_init:  # collapse on a real family switch, not load
+        _collapse_sidebar()
 st.sidebar.caption(F["blurb"])
 st.sidebar.caption("Same shared engine for every family — the family layer "
                    "only sets defaults and surfacing, never the chemistry.")
@@ -324,9 +382,9 @@ mode = st.radio(
     "Mode", MODE_OPTS, key="mode_radio", horizontal=True,
     help="Forward: design a charge from ratios. Inverse: analyze an existing "
          "formula in grams. Cold blend: combine dispersions/solvents by weight "
-         "parts with per-ingredient % solids. QA / QC: bench/plant adjustment "
-         "calculators. 2K urethane: resin + hardener mix ratio to a target "
-         "NCO:OH index. The family preselects this — you can still change it.")
+         "parts with per-ingredient % solids. 2K urethane: resin + hardener "
+         "mix ratio to a target NCO:OH index. The family preselects this — you "
+         "can still change it. (QA tools are in the sidebar.)")
 
 # ---------------- mode dispatch (registry; one line per new tab) ----------------
 if mode in MODE_DISPATCH:
@@ -512,9 +570,12 @@ if LIB_FILE.exists():
                     "Group": (row.get("Group") or "acid").strip().lower(),
                     "Amount": 1.0,
                 }
+                # Read the LIVE editor frame and drop empty rows so the added
+                # material replaces the blank placeholder instead of landing on
+                # row 2 (which left a messy, error-prone top row).
+                base = edited[edited["Component"].astype(str).str.strip() != ""]
                 st.session_state.table = _stabilize(pd.concat(
-                    [st.session_state.table, pd.DataFrame([new_row])],
-                    ignore_index=True))
+                    [base, pd.DataFrame([new_row])], ignore_index=True))
                 st.session_state.tbl_ver += 1
                 st.rerun()
     except Exception as e:

@@ -1,11 +1,14 @@
-"""QA / QC tools tab.
-Loop 1: % solids adjustment (exact mass balance), lab- and plant-scale.
-  - Adjust: fixed additions + one-or-more 'solve' carriers. One solve = a
-    single carrier; multiple solves = carriers combined in fixed ratio.
-  - Compare: each candidate carrier evaluated individually to raise low solids.
-Loop 2 (next): pH dose scaler — sample titration ratio x batch weight with
-  automatic titrant/sample concentration correction + format conversion.
-Mirrors blend_ui.render(); shares st.session_state.changelog.
+"""QA / QC tools — bench/plant calculators, kept deliberately simple for techs.
+
+Two independent tools, each reachable as its OWN sidebar entry so a tech sees
+only the controls for the job in front of them:
+  - '% Solids adjustment' : exact mass-balance solids raise/dilute (Adjust +
+    Compare carriers), lab- and plant-scale.
+  - 'pH adjustment'       : dose scaler from a bench titration, with automatic
+    titrant/sample concentration + dilution correction.
+
+render(section) renders one tool ('solids' / 'ph') or both ('all').
+Shares st.session_state.changelog with the rest of the app.
 """
 from datetime import date
 
@@ -82,16 +85,7 @@ def _titrant_inputs(prefix):
     return eqpg
 
 
-def render():
-    if "qa_ver" not in st.session_state:
-        st.session_state.qa_ver = 0
-    if "qa_streams" not in st.session_state:
-        st.session_state.qa_streams = DEFAULT_STREAMS.copy()
-    if "qa_cands" not in st.session_state:
-        st.session_state.qa_cands = DEFAULT_CANDS.copy()
-    if "changelog" not in st.session_state:
-        st.session_state.changelog = []
-
+def _solids_section():
     st.subheader("% Solids adjustment")
     st.caption("Exact mass balance, unit-agnostic (g at the bench, lb/kg at "
                "the kettle — output matches input). Raising low solids and "
@@ -257,9 +251,11 @@ def render():
                            f"(Lower-solids carriers need more mass and add "
                            f"more volume.)")
 
-    st.divider()
+    st.caption("% solids = exact mass balance (confirm with a measured solids "
+               "check). Planning / QC tool, not a CoA.")
 
-    # =================== pH ADJUSTMENT (dose scaler) ===================
+
+def _ph_section():
     st.subheader("pH adjustment — dose from a bench titration")
     st.caption("Titrate a weighed sample to your target endpoint; that "
                "captures the batch's own buffering. The tool scales it to the "
@@ -364,14 +360,34 @@ def render():
                     f"corrected {corr_u:.3f} {ph_unit} (manual {man_u:.3f}, "
                     f"err {err:+.1f}%)")
 
-    if st.session_state.changelog:
+    st.caption("pH dose scales your bench titration with exact concentration "
+               "math; it does not predict pH from volume, and a material "
+               "change in batch composition means re-titrate. Planning / QC "
+               "tool, not a CoA.")
+
+
+def _changelog():
+    if st.session_state.get("changelog"):
         with st.expander(f"📜 Change log ({len(st.session_state.changelog)})"):
             for line in reversed(st.session_state.changelog):
                 st.text(line)
 
-    st.divider()
-    st.caption("Planning/QC tool, not a CoA. % solids = exact mass balance "
-               "(confirm with a measured solids check). pH dose scales your "
-               "bench titration with exact concentration math; it does not "
-               "predict pH from volume, and a material change in batch "
-               "composition means re-titrate.")
+
+def render(section="all"):
+    """Render one QA tool ('solids' or 'ph') or both ('all')."""
+    if "qa_ver" not in st.session_state:
+        st.session_state.qa_ver = 0
+    if "qa_streams" not in st.session_state:
+        st.session_state.qa_streams = DEFAULT_STREAMS.copy()
+    if "qa_cands" not in st.session_state:
+        st.session_state.qa_cands = DEFAULT_CANDS.copy()
+    if "changelog" not in st.session_state:
+        st.session_state.changelog = []
+
+    if section in ("all", "solids"):
+        _solids_section()
+    if section == "all":
+        st.divider()
+    if section in ("all", "ph"):
+        _ph_section()
+    _changelog()
