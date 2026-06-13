@@ -847,3 +847,85 @@ def qa_solids_sheet_text(batch_mass, unit, cur_pct, tgt_pct, names,
     ap("Notes:")
     ap("\n\n")
     return "\n".join(L)
+
+
+# ---------------------------------------------------------------------------
+# QA / QC: pH adjustment dose scaler.
+#   Honest method = the bench titration itself. A weighed sample is titrated
+#   to the target endpoint; that captures the batch's buffering empirically.
+#   The tool scales (g titrant / g NEAT product) x batch weight and, crucially,
+#   corrects for any change in titrant OR sample concentration between the
+#   calibration titration and the batch dose -- the step techs forget.
+#   It does NOT predict pH from volume; a material change in batch composition
+#   means re-titrate a fresh sample.
+# ---------------------------------------------------------------------------
+
+# (MW g/mol, equivalents per mole) for common neutralizers / titrants.
+TITRANT_PRESETS = {
+    "NaOH (caustic soda)": (40.00, 1), "KOH (caustic potash)": (56.11, 1),
+    "HCl": (36.46, 1), "H2SO4": (98.08, 2), "Acetic acid": (60.05, 1),
+    "Aqueous ammonia (NH3)": (17.03, 1), "DMEA": (89.14, 1),
+    "AMP-95 (as AMP)": (89.14, 1), "Triethylamine (TEA)": (101.19, 1),
+    "Sodium carbonate": (105.99, 2),
+}
+
+PH_FORMATS = ["% w/w", "% w/v", "Molarity (mol/L)", "Normality (eq/L)",
+              "eq/L", "eq/kg"]
+
+
+def ph_format_needs(fmt):
+    """Return (needs_density, needs_mw) for a concentration format."""
+    needs_density = fmt in {"% w/v", "Molarity (mol/L)",
+                            "Normality (eq/L)", "eq/L"}
+    needs_mw = fmt in {"% w/w", "% w/v", "Molarity (mol/L)"}
+    return needs_density, needs_mw
+
+
+def titrant_eq_per_g(fmt, value, eq_per_mol=1.0, mw=None, density=1.0):
+    """Equivalents per GRAM of titrant solution. Volume-based formats use
+    solution density (g/mL); mass-based formats (% w/w, eq/kg) ignore it."""
+    if fmt == "% w/w":
+        return (value / 100.0) * eq_per_mol / mw
+    if fmt == "eq/kg":
+        return value / 1000.0
+    if fmt in ("Normality (eq/L)", "eq/L"):
+        return value / (1000.0 * density)
+    if fmt == "Molarity (mol/L)":
+        return value * eq_per_mol / (1000.0 * density)
+    if fmt == "% w/v":
+        return (10.0 * value / mw) * eq_per_mol / (1000.0 * density)
+    raise ValueError(f"Unknown format: {fmt}")
+
+
+def ph_dose_from_titration(sample_mass, product_pct, titrant_g_cal,
+                           eqpg_cal, batch_mass, eqpg_dose):
+    """Scale a bench titration to a batch dose, with neat-product and
+    concentration corrections.
+
+    sample_mass   : mass of the titrated sample (as titrated, diluted or not)
+    product_pct   : % of that sample that is neat product (100 = pure)
+    titrant_g_cal : grams of titrant used on the sample to reach target
+    eqpg_cal      : equivalents per gram of the CALIBRATION titrant
+    batch_mass    : neat-product batch mass to dose
+    eqpg_dose     : equivalents per gram of the titrant being DOSED now
+
+    Returns dict with neat sample mass, specific demand (eq/g product),
+    batch equivalents, corrected dose (g of dosing titrant), the naive manual
+    dose (g sample basis, calibration strength), and % error of the manual.
+    """
+    w_neat = sample_mass * product_pct / 100.0
+    if w_neat <= 0:
+        return {"warning": "Neat product mass in the sample is zero — check "
+                           "sample mass and % product."}
+    if eqpg_dose <= 0 or eqpg_cal <= 0:
+        return {"warning": "Titrant strength resolved to zero — check "
+                           "concentration, MW, and density inputs."}
+    E_cal = titrant_g_cal * eqpg_cal
+    demand = E_cal / w_neat                 # eq per g neat product
+    E_batch = demand * batch_mass
+    corrected = E_batch / eqpg_dose
+    manual = (titrant_g_cal / sample_mass) * batch_mass
+    pct_err = (manual - corrected) / corrected * 100.0 if corrected else 0.0
+    return {"w_neat": w_neat, "E_cal": E_cal, "specific_demand": demand,
+            "E_batch": E_batch, "corrected_dose_g": corrected,
+            "manual_dose_g": manual, "pct_error": pct_err, "warning": None}

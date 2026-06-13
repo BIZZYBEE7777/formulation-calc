@@ -25,6 +25,62 @@ DEFAULT_CANDS = pd.DataFrame([
 ])
 MODE_OPTS = ["fixed", "solve"]
 
+PRESET_FMTS = ["% w/w", "% w/v", "Molarity (mol/L)", "Normality (eq/L)"]
+
+
+def _titrant_inputs(prefix):
+    """Render a titrant concentration block; return eq per gram of solution
+    (or None if inputs incomplete). Preset path = MW+eq baked in; direct path
+    = eq/kg or eq/L."""
+    from formulation_core import (TITRANT_PRESETS, titrant_eq_per_g,
+                                  ph_format_needs)
+    src = st.radio("Concentration source",
+                   ["Preset titrant", "Direct equivalents"],
+                   key=f"{prefix}_src", horizontal=True)
+    eqpg = None
+    if src == "Preset titrant":
+        names = list(TITRANT_PRESETS.keys()) + ["Other (enter MW + eq)"]
+        choice = st.selectbox("Titrant", names, key=f"{prefix}_preset")
+        if choice == "Other (enter MW + eq)":
+            o1, o2 = st.columns(2)
+            mw = o1.number_input("MW (g/mol)", min_value=0.01, value=40.0,
+                                 format="%.2f", key=f"{prefix}_mw")
+            eqm = o2.number_input("Equivalents per mole", min_value=1,
+                                  value=1, step=1, key=f"{prefix}_eqm")
+        else:
+            mw, eqm = TITRANT_PRESETS[choice]
+        fmt = st.selectbox("Concentration format", PRESET_FMTS,
+                           key=f"{prefix}_fmt")
+        needs_d, _ = ph_format_needs(fmt)
+        c1, c2 = st.columns(2)
+        val = c1.number_input(f"Value ({fmt})", min_value=0.0, value=50.0,
+                              format="%.4f", key=f"{prefix}_val")
+        dens = 1.0
+        if needs_d:
+            dens = c2.number_input("Solution density (g/mL)", min_value=0.1,
+                                   value=1.000, format="%.3f",
+                                   key=f"{prefix}_dens",
+                                   help="Required for volume-based formats "
+                                        "(% w/v, Molarity, Normality).")
+        try:
+            eqpg = titrant_eq_per_g(fmt, val, eqm, mw, dens)
+        except Exception:
+            eqpg = None
+    else:
+        d1, d2 = st.columns(2)
+        unit = d1.selectbox("Unit", ["eq/kg", "eq/L"], key=f"{prefix}_du")
+        v = d2.number_input(f"Value ({unit})", min_value=0.0, value=12.5,
+                            format="%.4f", key=f"{prefix}_dv")
+        if unit == "eq/L":
+            dd = st.number_input("Solution density (g/mL)", min_value=0.1,
+                                 value=1.000, format="%.3f", key=f"{prefix}_dd")
+            eqpg = titrant_eq_per_g("eq/L", v, density=dd)
+        else:
+            eqpg = titrant_eq_per_g("eq/kg", v)
+    if eqpg:
+        st.caption(f"→ {eqpg:.5g} eq per gram of solution")
+    return eqpg
+
 
 def render():
     if "qa_ver" not in st.session_state:
@@ -201,20 +257,121 @@ def render():
                            f"(Lower-solids carriers need more mass and add "
                            f"more volume.)")
 
+    st.divider()
+
+    # =================== pH ADJUSTMENT (dose scaler) ===================
+    st.subheader("pH adjustment — dose from a bench titration")
+    st.caption("Titrate a weighed sample to your target endpoint; that "
+               "captures the batch's own buffering. The tool scales it to the "
+               "batch and **corrects for any change in titrant or sample "
+               "concentration** — the step that gets missed. It does not "
+               "predict pH from volume.")
+
+    st.markdown("**1 · Calibration titration** (on the bench sample)")
+    cc1, cc2, cc3 = st.columns(3)
+    with cc1:
+        samp_mass = st.number_input("Sample mass titrated (g)",
+                                    min_value=0.0, value=200.0, format="%.3f")
+    with cc2:
+        prod_pct = st.number_input("% product in sample", min_value=0.0,
+                                   max_value=100.0, value=100.0, format="%.2f",
+                                   help="100 = neat. If the titrated sample "
+                                        "was diluted, enter the % that is neat "
+                                        "product — the dose is referenced to "
+                                        "neat product, not the diluted mass.")
+    with cc3:
+        titr_g = st.number_input("Titrant used (g)", min_value=0.0,
+                                 value=4.0, format="%.4f",
+                                 help="Grams of titrant to reach the target "
+                                      "endpoint on this sample.")
+    st.markdown("Calibration titrant:")
+    eqpg_cal = _titrant_inputs("ph_cal")
+
+    st.markdown("**2 · Dosing titrant** (what you'll add to the batch)")
+    same = st.checkbox("Same titrant & strength as calibration", value=True,
+                       key="ph_same")
+    if same:
+        eqpg_dose = eqpg_cal
+    else:
+        eqpg_dose = _titrant_inputs("ph_dose")
+    diluted = st.checkbox("Dosing titrant is cut from stock before use",
+                          value=False, key="ph_dil")
+    if diluted:
+        x1, x2 = st.columns(2)
+        ps = x1.number_input("Parts stock (by mass)", min_value=0.0,
+                             value=1.0, format="%.3f", key="ph_ps")
+        pd_ = x2.number_input("Parts diluent (by mass)", min_value=0.0,
+                             value=1.0, format="%.3f", key="ph_pd")
+        if eqpg_dose and (ps + pd_) > 0:
+            frac = ps / (ps + pd_)
+            eqpg_dose = eqpg_dose * frac
+            st.caption(f"Cut to {100*frac:.1f}% stock by mass → "
+                       f"{eqpg_dose:.5g} eq/g working strength "
+                       f"(C₁V₁=C₂V₂, mass basis).")
+
+    st.markdown("**3 · Batch to adjust**")
+    bb1, bb2 = st.columns(2)
+    with bb1:
+        ph_batch = st.number_input("Batch size (neat product)",
+                                   min_value=0.0, value=2000.0, format="%.2f",
+                                   key="ph_batch")
+    with bb2:
+        ph_unit = st.selectbox("Batch unit", ["g", "kg", "lb"], index=2,
+                               key="ph_unit")
+    factor = {"g": 1.0, "kg": 1000.0, "lb": 453.59237}[ph_unit]
+
+    if st.button("Compute dose", type="primary", key="ph_go"):
+        from formulation_core import ph_dose_from_titration
+        if not eqpg_cal or not eqpg_dose:
+            st.warning("Complete both titrant concentration blocks first.")
+        else:
+            r = ph_dose_from_titration(samp_mass, prod_pct, titr_g, eqpg_cal,
+                                       ph_batch * factor, eqpg_dose)
+            if r.get("warning"):
+                st.warning(r["warning"])
+            else:
+                # dose returned in grams; convert to batch unit for display
+                corr_u = r["corrected_dose_g"] / factor
+                man_u = r["manual_dose_g"] / factor
+                st.subheader("Dose")
+                p1, p2, p3 = st.columns(3)
+                p1.metric("Corrected dose", f"{corr_u:.3f} {ph_unit}",
+                          help="Concentration- and neat-product-corrected.")
+                p2.metric("Naive manual dose", f"{man_u:.3f} {ph_unit}",
+                          help="(g titrant / g sample) × batch — no "
+                               "correction.")
+                err = r["pct_error"]
+                if abs(err) < 0.05:
+                    p3.metric("Manual error", "≈ 0%")
+                    st.success("No concentration/dilution change — manual and "
+                               "corrected agree.")
+                else:
+                    word = "OVER-dosing" if err > 0 else "UNDER-dosing"
+                    p3.metric("Manual error", f"{err:+.1f}%",
+                              delta=f"{word}", delta_color="inverse")
+                    st.warning(f"The uncorrected manual figure would be "
+                               f"**{word.lower()} by {abs(err):.1f}%** — the "
+                               f"titrant or sample concentration changed. Use "
+                               f"the corrected dose.")
+                st.caption(f"Neat product in sample: {r['w_neat']:.2f} g · "
+                           f"specific demand {r['specific_demand']:.5g} eq per "
+                           f"g product · batch needs {r['E_batch']:.4g} eq. "
+                           f"Assumes the same titrant chemistry; if the "
+                           f"batch's composition differs materially from the "
+                           f"sample, re-titrate a fresh sample.")
+                st.session_state.changelog.append(
+                    f"[{date.today()}] QA pH dose on {ph_batch:.1f} {ph_unit}: "
+                    f"corrected {corr_u:.3f} {ph_unit} (manual {man_u:.3f}, "
+                    f"err {err:+.1f}%)")
+
     if st.session_state.changelog:
         with st.expander(f"📜 Change log ({len(st.session_state.changelog)})"):
             for line in reversed(st.session_state.changelog):
                 st.text(line)
 
     st.divider()
-    st.info("**pH adjustment — next build loop.** Sample-titration dose "
-            "scaler: (g titrant / g neat product) × batch weight, with "
-            "**automatic correction when titrant or sample concentration "
-            "changes** (format conversion % w/w · % w/v · M · N · eq/L, plus "
-            "titrant cut C₁V₁=C₂V₂ and sample-dilution basis). Shows the "
-            "manual number beside the corrected one so the forgotten "
-            "concentration adjustment is impossible to miss. It will not "
-            "predict pH from volume, and a material change in batch "
-            "composition means re-titrate a fresh sample.")
-    st.caption("Planning/QC tool, not a CoA. % solids adjustment is exact "
-               "mass balance; confirm with a measured solids check.")
+    st.caption("Planning/QC tool, not a CoA. % solids = exact mass balance "
+               "(confirm with a measured solids check). pH dose scales your "
+               "bench titration with exact concentration math; it does not "
+               "predict pH from volume, and a material change in batch "
+               "composition means re-titrate.")
