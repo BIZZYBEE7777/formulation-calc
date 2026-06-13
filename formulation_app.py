@@ -262,13 +262,16 @@ with tc2:
                  "start fresh. Save first if you want to keep this one!"):
         st.session_state.table = _stabilize(DEFAULT_ROWS.copy())
         st.session_state.blend_table = DEFAULT_BLEND.copy()
-        for k in ("last", "blend_result", "blend_specs", "visc_cal"):
+        for k in ("last", "blend_result", "blend_specs", "visc_cal",
+                  "spec_targets"):
             st.session_state.pop(k, None)
         st.session_state.changelog = []
         st.session_state.tbl_ver += 1
         st.session_state.blend_ver = st.session_state.get("blend_ver", 0) + 1
         st.session_state.visc_cal_ver = \
             st.session_state.get("visc_cal_ver", 0) + 1
+        st.session_state.spec_tgt_ver = \
+            st.session_state.get("spec_tgt_ver", 0) + 1
         st.rerun()
 
 # ---------------- save / load formulas ----------------
@@ -288,6 +291,10 @@ with st.expander("💾 Save / load formula"):
         if "visc_cal" in st.session_state:
             _payload["visc_cal"] = st.session_state.visc_cal.to_dict(
                 orient="records")
+        # live-spec-strip target ranges — pinned via the spec-targets panel
+        if "spec_targets" in st.session_state:
+            _payload["spec_targets"] = st.session_state.spec_targets.to_dict(
+                orient="records")
         payload = json.dumps(_payload, indent=1)
         st.download_button("⬇️ Save current formula (.json)", payload,
                            file_name=f"{fname}.json", mime="application/json")
@@ -306,6 +313,11 @@ with st.expander("💾 Save / load formula"):
                     st.session_state.visc_cal = pd.DataFrame(data["visc_cal"])
                     st.session_state.visc_cal_ver = \
                         st.session_state.get("visc_cal_ver", 0) + 1
+                if "spec_targets" in data:
+                    st.session_state.spec_targets = pd.DataFrame(
+                        data["spec_targets"])
+                    st.session_state.spec_tgt_ver = \
+                        st.session_state.get("spec_tgt_ver", 0) + 1
                 st.session_state.changelog = data.get("changelog", [])
                 st.success(f"Loaded '{data.get('name','formula')}' "
                            f"(saved {data.get('saved','?')}). ")
@@ -784,6 +796,10 @@ if "last" in st.session_state:
     out, rxn = L["out"], L["rxn"]
     wp = weight_percents(out["rows"])
 
+    # live spec strip (value vs user target ranges) — top of results
+    import analysis_ui
+    analysis_ui.render_spec_strip(out, L.get("basic_n", 3.0))
+
     st.subheader("3 · Charge table")
     rows_disp = []
     for i, r in enumerate(out["rows"]):
@@ -1114,8 +1130,14 @@ if "last" in st.session_state:
             "description": st.text_input("Batch description", "")}
     sheet = charge_sheet_text(out, meta)
     st.code(sheet, language=None)
-    st.download_button("Download charge sheet (.txt)", sheet,
-                       file_name=f"charge_{meta['exp_id'] or 'batch'}.txt")
+    from pdf_util import text_to_pdf
+    dl1, dl2 = st.columns(2)
+    dl1.download_button("Download charge sheet (.txt)", sheet,
+                        file_name=f"charge_{meta['exp_id'] or 'batch'}.txt")
+    dl2.download_button("⬇️ Download charge sheet (.pdf)",
+                        text_to_pdf(sheet, "Batch charge sheet"),
+                        file_name=f"charge_{meta['exp_id'] or 'batch'}.pdf",
+                        mime="application/pdf")
 
 st.divider()
 st.caption("Verify MWs and assays against CoAs. Theoretical values assume "

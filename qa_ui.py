@@ -194,9 +194,15 @@ def _solids_section():
             res["stream_masses"], res["final_mass"],
             res["final_solids_pct"], meta)
         st.code(sheet, language=None)
-        st.download_button("Download charge sheet (.txt)", sheet,
-                           file_name=f"qa_solids_{meta['exp_id'] or 'batch'}"
-                                     f".txt")
+        from pdf_util import text_to_pdf
+        dl1, dl2 = st.columns(2)
+        dl1.download_button("Download charge sheet (.txt)", sheet,
+                            file_name=f"qa_solids_{meta['exp_id'] or 'batch'}"
+                                      f".txt")
+        dl2.download_button("⬇️ Download charge sheet (.pdf)",
+                            text_to_pdf(sheet, "QA % solids charge sheet"),
+                            file_name=f"qa_solids_{meta['exp_id'] or 'batch'}"
+                                      f".pdf", mime="application/pdf")
 
     # =================== COMPARE candidates ===================
     st.markdown("#### Compare carriers — raise low solids")

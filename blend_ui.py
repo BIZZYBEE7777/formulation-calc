@@ -30,6 +30,22 @@ DEFAULT_PARTS = pd.DataFrame([
 ROLE_MAP = {"fixed wt%": "fixed", "ratio (solids carrier)": "ratio",
             "balance (fills to 100%)": "balance"}
 
+# Typical specific-gravity RANGES by resin family (g/mL). Reference only —
+# prefills the density field; the user measures/overrides. NOT a spec.
+SG_LIBRARY = {
+    "Long-oil alkyd": (0.93, 0.97),
+    "Medium-oil alkyd": (0.95, 0.99),
+    "Short-oil alkyd": (0.98, 1.04),
+    "Imidazoline": (0.94, 0.98),
+    "Polyamide resin": (0.95, 0.99),
+    "UPR (in styrene)": (1.05, 1.15),
+    "Vinyl ester (in styrene)": (1.04, 1.10),
+    "Acrylic polyol (solvent)": (1.02, 1.08),
+    "Urethane prepolymer": (1.05, 1.15),
+    "Waterborne dispersion": (1.02, 1.06),
+    "Water": (1.00, 1.00),
+}
+
 
 def render():
     if "blend_specs" not in st.session_state:
@@ -181,13 +197,27 @@ def render():
     # ---------------- batch scaling ----------------
     st.subheader("4 · Scale to batch size" if method == "Known parts"
                  else "3 · Scale to batch size")
+    sg_pick = st.selectbox(
+        "Typical SG prefill (optional — measure yours)",
+        ["— (use 1.00)"] + list(SG_LIBRARY.keys()),
+        help="Per-family TYPICAL specific-gravity ranges. Sets the density "
+             "default below; override with your measured value. Reference "
+             "only, not a spec.")
+    if sg_pick != "— (use 1.00)":
+        lo, hi = SG_LIBRARY[sg_pick]
+        sg_default = round((lo + hi) / 2.0, 3)
+        st.caption(f"{sg_pick}: typical SG {lo:.2f}–{hi:.2f} g/mL "
+                   f"(prefilled {sg_default:.3f} — measure yours).")
+    else:
+        sg_default = 1.00
     s1, s2 = st.columns(2)
     with s1:
         density = st.number_input(
             "Blend density (g/mL) — for volume sizes", min_value=0.5,
-            max_value=2.5, value=1.00, format="%.3f",
-            help="Waterborne blends usually 1.00–1.05; measure for tight "
-                 "work. Mass sizes ignore this.")
+            max_value=2.5, value=sg_default, format="%.3f",
+            help="Sets volume-size scaling. Prefilled from the typical-SG "
+                 "picker above; measure for tight work. Mass sizes ignore "
+                 "this.")
     with s2:
         custom_g = st.number_input("Custom batch (g, 0 = off)",
                                    min_value=0.0, value=0.0, format="%.1f")
@@ -216,8 +246,14 @@ def render():
     sheet = blend_sheet_text(names, solids, blend_batch_grams(parts, gtot),
                              pick, blend_pct, meta)
     st.code(sheet, language=None)
-    st.download_button("Download charge sheet (.txt)", sheet,
-                       file_name=f"blend_{meta['exp_id'] or 'batch'}.txt")
+    from pdf_util import text_to_pdf
+    dl1, dl2 = st.columns(2)
+    dl1.download_button("Download charge sheet (.txt)", sheet,
+                        file_name=f"blend_{meta['exp_id'] or 'batch'}.txt")
+    dl2.download_button("⬇️ Download charge sheet (.pdf)",
+                        text_to_pdf(sheet, "Cold blend charge sheet"),
+                        file_name=f"blend_{meta['exp_id'] or 'batch'}.pdf",
+                        mime="application/pdf")
 
     if st.session_state.changelog:
         with st.expander(f"📜 Change log ({len(st.session_state.changelog)})"):

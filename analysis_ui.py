@@ -10,13 +10,91 @@ relevant ones per active family.
   render_gel_point(out, extent)     — alkyd + UPR (Carothers theory)
   render_unsaturation(out)          — UPR (C=C bookkeeping)
   render_viscosity_ohv()            — alkyd/ester (EMPIRICAL fit to user data)
+  render_spec_strip(out, basic_n)   — all families (live value vs targets)
 """
 import pandas as pd
 import streamlit as st
 
 from formulation_core import (oil_length, gel_point_carothers,
                               unsaturation_stats, fit_log_viscosity_ohv,
-                              predict_ohv_from_viscosity)
+                              predict_ohv_from_viscosity, total_amine_value)
+
+# ---- General (all-family) live spec strip: value vs user target range ----
+# (key, short label, value format, unit)
+_SPEC_DEFS = [
+    ("acid_value", "AV", "{:.1f}", "mg KOH/g"),
+    ("hydroxyl_value", "OHV", "{:.1f}", "mg KOH/g"),
+    ("amine_value", "AmV", "{:.1f}", "mg KOH/g"),
+    ("total_amine_value", "TAV", "{:.1f}", "mg KOH/g"),
+    ("pct_nco", "%NCO", "{:.2f}", "%"),
+]
+_LABEL2KEY = {lab: k for k, lab, _, _ in _SPEC_DEFS}
+DEFAULT_SPEC_TARGETS = pd.DataFrame(
+    [{"Spec": lab, "Track": False, "Low": 0.0, "High": 0.0}
+     for _, lab, _, _ in _SPEC_DEFS])
+
+
+def _spec_status(v, lo, hi):
+    """🟢 in [lo,hi], 🟡 within a 10%-of-range margin outside, 🔴 beyond,
+    ⚪ if no value."""
+    if v is None:
+        return "⚪"
+    if hi < lo:
+        lo, hi = hi, lo
+    if lo <= v <= hi:
+        return "🟢"
+    width = hi - lo
+    margin = 0.10 * width if width > 0 else 0.05 * max(abs(hi), 1.0)
+    return "🟡" if (lo - margin) <= v <= (hi + margin) else "🔴"
+
+
+def render_spec_strip(out, basic_n):
+    """Live AV/OHV/AmV/TAV/%NCO vs user-set target ranges, green/amber/red.
+    Targets persist in the formula JSON (pin button). All-family — a planning
+    aid, not a CoA."""
+    ev = out.get("end_values", {})
+    vals = {"acid_value": ev.get("acid_value"),
+            "hydroxyl_value": ev.get("hydroxyl_value"),
+            "amine_value": ev.get("amine_value"),
+            "total_amine_value": total_amine_value(out, basic_n),
+            "pct_nco": ev.get("pct_nco")}
+    if "spec_targets" not in st.session_state:
+        st.session_state.spec_targets = DEFAULT_SPEC_TARGETS.copy()
+    if "spec_tgt_ver" not in st.session_state:
+        st.session_state.spec_tgt_ver = 0
+
+    with st.expander("🎯 Spec targets — tick a spec and set its range"):
+        ed = st.data_editor(
+            st.session_state.spec_targets, width="stretch", hide_index=True,
+            column_config={
+                "Spec": st.column_config.TextColumn(disabled=True),
+                "Track": st.column_config.CheckboxColumn(
+                    help="Show this spec in the status strip"),
+                "Low": st.column_config.NumberColumn(format="%.2f"),
+                "High": st.column_config.NumberColumn(format="%.2f"),
+            }, key=f"spec_tgt_v{st.session_state.spec_tgt_ver}")
+        if st.button("📌 Pin targets to formula", key="spec_pin",
+                     help="Save these ranges in the formula JSON. The strip "
+                          "already uses the table live; pin before you Save."):
+            st.session_state.spec_targets = ed.copy()
+            st.session_state.spec_tgt_ver += 1
+            st.success("Spec targets pinned — they'll save with the formula.")
+            st.rerun()
+
+    tracked = ed[ed["Track"] == True]  # noqa: E712
+    if tracked.empty:
+        return
+    fmt = {lab: (f, u) for _, lab, f, u in _SPEC_DEFS}
+    cols = st.columns(len(tracked))
+    for col, (_, row) in zip(cols, tracked.iterrows()):
+        lab = str(row["Spec"])
+        lo, hi = float(row["Low"]), float(row["High"])
+        v = vals.get(_LABEL2KEY.get(lab))
+        f, u = fmt.get(lab, ("{:.1f}", ""))
+        vtxt = f.format(v) if v is not None else "—"
+        col.markdown(f"{_spec_status(v, lo, hi)} **{lab}**  \n{vtxt} {u}  \n"
+                     f"<small>target {lo:g}–{hi:g}</small>",
+                     unsafe_allow_html=True)
 
 DEFAULT_VISC = pd.DataFrame({
     "OHV": pd.Series([None, None, None], dtype="float"),
