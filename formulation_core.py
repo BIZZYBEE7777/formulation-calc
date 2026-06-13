@@ -8,17 +8,19 @@ Component dict fields:
   mw          float molecular weight (g/mol) of the ACTIVE substance
   assay       float assay / purity as fraction (0-1]; as-is grams = active/assay
   functionality float reactive groups per molecule (e.g. diacid = 2)
-  group       str   'acid' | 'amine' | 'hydroxyl' | 'inert'
+  group       str   'acid' | 'amine' | 'hydroxyl' | 'isocyanate' | 'inert'
   ratio       float molar ratio (relative moles)
 
 Reaction types supported for condensation accounting:
-  'amidation'      acid + amine  -> amide + H2O
-  'esterification' acid + hydroxyl -> ester + H2O
+  'amidation'      acid + amine      -> amide + H2O
+  'esterification' acid + hydroxyl   -> ester + H2O
+  'urethane'       isocyanate + OH   -> carbamate (ADDITION, no byproduct)
   'none'           no condensation math
 """
 
 WATER_MW = 18.015
 KOH_MW_MG = 56100.0  # mg KOH per equivalent, for AV/AmV/OHV
+NCO_GROUP_MW = 42.017  # g per NCO group (N+C+O), for %NCO bookkeeping
 
 
 def component_calcs(components, scale=1.0):
@@ -42,6 +44,7 @@ def totals(rows):
         "eq_acid": sum(r["eq"] for r in rows if r["group"] in ("acid", "anhydride")),
         "eq_amine": sum(r["eq"] for r in rows if r["group"] == "amine"),
         "eq_oh": sum(r["eq"] for r in rows if r["group"] == "hydroxyl"),
+        "eq_nco": sum(r["eq"] for r in rows if r["group"] == "isocyanate"),
         "eq_capper": sum(r["eq"] for r in rows if r["group"] == "capper"),
         # one water-free ring-opening per anhydride MOLECULE:
         "anh_moles": sum(r["moles"] for r in rows if r["group"] == "anhydride"),
@@ -85,12 +88,27 @@ def condensation(rows, reaction, extent=1.0, cyc_extent=0.0):
         acid_side, nuc_side = t["eq_acid"], t["eq_amine"] + t["eq_capper"]
     elif reaction == "esterification":
         acid_side, nuc_side = t["eq_acid"], t["eq_oh"] + t["eq_capper"]
+    elif reaction == "urethane":
+        # Addition reaction: isocyanate + OH -> carbamate. NO condensate.
+        # Every bond is water-free, so there is nothing to collect. Models the
+        # primary NCO+OH reaction ONLY (ignores NCO-water -> urea/CO2,
+        # NCO-amine -> urea, and allophanate/biuret branching).
+        nco_side, oh_side = t["eq_nco"], t["eq_oh"]
+        bonds = min(nco_side, oh_side) * extent
+        return {"bonds": bonds, "water_g": 0.0, "water_amide_g": 0.0,
+                "water_cyc_g": 0.0, "cyc_rings": 0.0, "p_limiting": extent,
+                "acid_side": nco_side, "nuc_side": oh_side,
+                "residual": {"acid": t["eq_acid"], "amine": t["eq_amine"],
+                             "hydroxyl": t["eq_oh"] - bonds,
+                             "capper": t["eq_capper"],
+                             "nco": t["eq_nco"] - bonds}}
     else:
         return {"bonds": 0.0, "water_g": 0.0, "water_amide_g": 0.0,
                 "water_cyc_g": 0.0, "cyc_rings": 0.0, "p_limiting": 0.0,
                 "acid_side": t["eq_acid"], "nuc_side": 0.0,
                 "residual": {"acid": t["eq_acid"], "amine": t["eq_amine"],
-                             "hydroxyl": t["eq_oh"], "capper": t["eq_capper"]}}
+                             "hydroxyl": t["eq_oh"], "capper": t["eq_capper"],
+                             "nco": t["eq_nco"]}}
 
     limiting = min(acid_side, nuc_side)
     bonds = limiting * extent
@@ -148,10 +166,13 @@ def batch_summary(components, scale, reaction="none", extent=1.0, cyc_extent=0.0
         ev["acid_value"] = KOH_MW_MG * r["acid"] / resin_mass
         ev["amine_value"] = KOH_MW_MG * r["amine"] / resin_mass
         ev["hydroxyl_value"] = KOH_MW_MG * r["hydroxyl"] / resin_mass
+        if reaction == "urethane":
+            # residual %NCO on the resin (NCO-terminated prepolymer spec)
+            ev["pct_nco"] = 100.0 * NCO_GROUP_MW * r.get("nco", 0.0) / resin_mass
 
     # ---- Carothers / step-growth stats (reacting monomers only) ----
     car = {}
-    if reaction in ("amidation", "esterification"):
+    if reaction in ("amidation", "esterification", "urethane"):
         partner = "amine" if reaction == "amidation" else "hydroxyl"
         ea, eb = cond["acid_side"], cond["nuc_side"]
         if ea > 0 and eb > 0:
@@ -159,15 +180,22 @@ def batch_summary(components, scale, reaction="none", extent=1.0, cyc_extent=0.0
             p = extent
             denom = 1 + r_ratio - 2 * r_ratio * p
             xn = (1 + r_ratio) / denom if denom > 1e-12 else float("inf")
-            react_groups = ("acid", "anhydride", partner, "capper")
+            if reaction == "urethane":
+                react_groups = ("isocyanate", "hydroxyl")
+                excess_grp = "isocyanate (NCO)" if ea > eb else "hydroxyl"
+            else:
+                react_groups = ("acid", "anhydride", partner, "capper")
+                excess_grp = "acid" if ea > eb else partner + "/capper"
             reacting = [x for x in rows if x["group"] in react_groups]
             n0 = sum(x["moles"] for x in reacting)
             mass_react = sum(x["g_active"] for x in reacting) - cond["water_g"]
             chains = n0 - cond["bonds"]
             mn = mass_react / chains if chains > 1e-12 else float("inf")
-            excess_grp = "acid" if ea > eb else partner + "/capper"
             car = {"r": r_ratio, "Xn": xn, "Mn": mn, "excess_group": excess_grp,
                    "excess_pct": 100.0 * (max(ea, eb) / min(ea, eb) - 1.0)}
+            if reaction == "urethane":
+                # NCO:OH index — conversion-independent charge property.
+                car["nco_oh_index"] = 100.0 * ea / eb
 
     return {"rows": rows, "totals": t, "cond": cond,
             "charge_mass": charge_mass, "inerts": inerts,
@@ -929,3 +957,82 @@ def ph_dose_from_titration(sample_mass, product_pct, titrant_g_cal,
     return {"w_neat": w_neat, "E_cal": E_cal, "specific_demand": demand,
             "E_batch": E_batch, "corrected_dose_g": corrected,
             "manual_dose_g": manual, "pct_error": pct_err, "warning": None}
+
+
+# ---------------------------------------------------------------------------
+# Urethane / NCO bookkeeping + 2K mix-ratio front-door
+#   Same step-growth engine as everything else: isocyanate + OH is just an
+#   ADDITION bond (no condensate). These helpers are convenience converters
+#   for the dedicated 2K tab; they don't introduce any new chemistry.
+# ---------------------------------------------------------------------------
+
+def nco_eq_per_g(pct_nco):
+    """NCO equivalents per gram of isocyanate from its %NCO (CoA spec).
+    %NCO = 100 x (NCO group mass) / equivalent weight, so eq/g = %NCO/4201.7."""
+    return (pct_nco / 100.0) / NCO_GROUP_MW
+
+
+def oh_eq_per_g(ohv):
+    """OH equivalents per gram of polyol from its hydroxyl value (mg KOH/g)."""
+    return ohv / KOH_MW_MG
+
+
+def solve_2k_index_ratio(resin_ohv, hardener_pct_nco, target_index,
+                         resin_basis=100.0):
+    """2K urethane mix ratio: grams of isocyanate hardener per `resin_basis`
+    grams of polyol resin to hit a target NCO:OH index (100 = stoichiometric,
+    105-110 = typical NCO-rich). Pure stoichiometry on the two CoA specs.
+    Returns {hardener_parts, resin_parts, total, mix_ratio, eq_oh, eq_nco,
+    index, wt_pct_hardener, warning}."""
+    if resin_ohv <= 0:
+        return {"warning": "Resin hydroxyl value must be > 0."}
+    if hardener_pct_nco <= 0:
+        return {"warning": "Hardener %NCO must be > 0."}
+    if target_index <= 0:
+        return {"warning": "Target index must be > 0."}
+    oh_pg = oh_eq_per_g(resin_ohv)
+    nco_pg = nco_eq_per_g(hardener_pct_nco)
+    eq_oh = resin_basis * oh_pg
+    hardener = (target_index / 100.0) * eq_oh / nco_pg
+    eq_nco = hardener * nco_pg
+    total = resin_basis + hardener
+    return {"resin_parts": resin_basis, "hardener_parts": hardener,
+            "total": total, "mix_ratio": hardener / resin_basis,
+            "eq_oh": eq_oh, "eq_nco": eq_nco,
+            "index": 100.0 * eq_nco / eq_oh if eq_oh else 0.0,
+            "wt_pct_hardener": 100.0 * hardener / total if total else 0.0,
+            "warning": None}
+
+
+# ---------------------------------------------------------------------------
+# Family-specific reporting shortcuts (NOT new chemistry — framings of the
+# same charge): alkyd oil length, branched-system Carothers gel point.
+# ---------------------------------------------------------------------------
+
+def oil_length(summary, oil_names):
+    """Oil length = 100 x (active wt of the tagged oil / fatty-acid rows) /
+    theoretical resin solids. NOTE: classic oil length is on a triglyceride-oil
+    basis; this is the charged-active-weight ratio of whatever rows you tag —
+    labeled as such in the UI."""
+    oil_g = sum(r["g_active"] for r in summary["rows"]
+                if r["name"] in oil_names)
+    resin = summary.get("resin_mass", 0.0)
+    return 100.0 * oil_g / resin if resin > 0 else 0.0
+
+
+def gel_point_carothers(summary):
+    """Carothers average functionality and gel point for branched step-growth
+    (alkyd / UPR). f_avg = mole-average functionality of reacting monomers;
+    p_gel = 2 / f_avg when f_avg > 2 (else linear, no gel). Carothers
+    OVER-predicts the conversion at gel vs the Flory statistical treatment;
+    assumes equal reactivity and balanced stoichiometry. Returns
+    {f_avg, p_gel_or_None}."""
+    react = [r for r in summary["rows"]
+             if r["group"] in ("acid", "anhydride", "amine", "hydroxyl",
+                               "capper", "isocyanate")]
+    n = sum(r["moles"] for r in react)
+    if n <= 0:
+        return {"f_avg": 0.0, "p_gel": None}
+    f_avg = sum(r["moles"] * r["functionality"] for r in react) / n
+    p_gel = 2.0 / f_avg if f_avg > 2.0 else None
+    return {"f_avg": f_avg, "p_gel": p_gel}

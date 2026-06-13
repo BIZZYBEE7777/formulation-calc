@@ -25,13 +25,92 @@ from formulation_core import (solve_scale, batch_summary, charge_sheet_text,
 st.set_page_config(page_title="Formulation Calculator", page_icon="⚗️",
                    layout="wide")
 
+# ---------------- product families (soft filter over ONE shared engine) ----
+# Picking a family preselects the mode + default reaction and surfaces the
+# relevant tool expanders. It NEVER hides anything (Show all tools overrides
+# surfacing) and NEVER touches the component/blend tables. 'General' = today's
+# behavior exactly. 'seed' is the demo JSON for a LATER loop's starter button —
+# stored here, not wired now. The family layer is a shortcut, not
+# family-specific chemistry: a UPR ester and an alkyd ester compute identically.
+MODE_MOLAR = "Molar ratios → batch"
+MODE_GRAMS = "Grams → ratios & theory"
+MODE_BLEND = "Cold blend (wt% + solids)"
+MODE_QA = "QA / QC tools"
+MODE_URETHANE = "2K urethane"
+MODE_OPTS = [MODE_MOLAR, MODE_GRAMS, MODE_BLEND, MODE_QA, MODE_URETHANE]
+
+# Mode -> module to dispatch to (registry; extend with one line per new tab).
+MODE_DISPATCH = {MODE_BLEND: "blend_ui", MODE_QA: "qa_ui",
+                 MODE_URETHANE: "urethane_ui"}
+
+# Reaction selectbox labels (the engine reaction is mapped from these below).
+RXN_NONE = "none"
+RXN_AMID = "amidation (acid+amine)"
+RXN_IMID = "amidation + imidazoline (acid+amine)"
+RXN_ESTER = "esterification (acid+OH)"
+RXN_URET = "urethane (NCO+OH)"
+RXN_OPTS = [RXN_NONE, RXN_AMID, RXN_IMID, RXN_ESTER, RXN_URET]
+
+FAMILIES = {
+    "General": {
+        "mode": None, "reaction": None, "expand": [], "seed": None,
+        "blurb": "Everything visible, nothing preselected — the full tool, "
+                 "exactly as before."},
+    "Alkyd": {
+        "mode": MODE_MOLAR, "reaction": RXN_ESTER,
+        "expand": ["quick_spec", "spec_solver"],
+        "oil_length": True, "gel_point": True,
+        "seed": "demo_4_longoil_alkyd.json",
+        "blurb": "Ratios → batch, esterification. Oil length and AV/OHV end "
+                 "values surfaced. Same engine as every family — this just "
+                 "sets defaults."},
+    "Polyamide": {
+        "mode": MODE_MOLAR, "reaction": RXN_AMID,
+        "expand": ["quick_spec", "spec_solver"],
+        "seed": "demo_2_polyamide_dimer_DETA.json",
+        "blurb": "Ratios → batch, amidation. Carothers Xn/Mn and AmV / Total "
+                 "Amine Value surfaced. Same shared engine."},
+    "Imidazoline": {
+        "mode": MODE_MOLAR, "reaction": RXN_IMID,
+        "expand": ["imidazoline_designer", "cook_tracker", "quick_spec",
+                   "spec_solver"],
+        "seed": "demo_1_imidazoline_TOFA_DETA.json",
+        "blurb": "Ratios → batch, amidation + cyclization. Imidazoline "
+                 "designer, cook tracker and TAV vs unreacted amine surfaced. "
+                 "Same shared engine."},
+    "UPR": {
+        "mode": MODE_MOLAR, "reaction": RXN_ESTER,
+        "expand": ["quick_spec", "spec_solver"],
+        "gel_point": True,
+        "seed": "demo_3_UPR_MA_PG_DCPD.json",
+        "blurb": "Ratios → batch, esterification. Anhydride / DCPD water "
+                 "credits live in the Group column of the table; gel point "
+                 "surfaced. Same shared engine."},
+    "Waterborne blend": {
+        "mode": MODE_BLEND, "reaction": None, "expand": [],
+        "seed": "demo_5_coldblend_letdown.json",
+        "blurb": "Cold blend by weight parts + per-ingredient solids: "
+                 "constraint solver, dilute-to-target-solids and vessel / "
+                 "gallon scaling. No reaction — a physical blend."},
+    "Polyurethane": {
+        "mode": MODE_URETHANE, "reaction": RXN_URET,
+        "expand": ["quick_spec", "spec_solver"],
+        "gel_point": True, "seed": None,
+        "blurb": "2K mix ratio to a target NCO:OH index. Full urethane "
+                 "charges are available in Molar → batch with the 'urethane' "
+                 "reaction + 'isocyanate' group. Addition reaction — no "
+                 "condensate."},
+}
+
 CACHE_FILE = Path(__file__).parent / "mw_cache.json"
 PUBCHEM_PROP = ("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/"
                 "{}/property/MolecularWeight,IUPACName,MolecularFormula/JSON")
 
 GROUP_HELP = ("'anhydride' = f×acid eq, first ring-opening releases no H2O "
               "(MA: f=2). 'capper' = addition capper, consumes an acid eq, "
-              "no H2O (DCPD: f=1). 'inert' = solvent/non-reactive.")
+              "no H2O (DCPD: f=1). 'isocyanate' = NCO groups; reacts with OH "
+              "in the 'urethane' reaction (addition, no condensate). "
+              "'inert' = solvent/non-reactive.")
 
 
 def load_mw_cache():
@@ -148,26 +227,62 @@ with st.expander("💾 Save / load formula"):
             except Exception as e:
                 st.error(f"Couldn't load file: {e}")
 
-mode = st.radio("Mode", ["Molar ratios → batch", "Grams → ratios & theory",
-                         "Cold blend (wt% + solids)", "QA / QC tools"],
-                horizontal=True,
-                help="Forward: design a charge from ratios. Inverse: analyze "
-                     "an existing formula in grams. Cold blend: combine "
-                     "dispersions/solvents by weight parts with per-"
-                     "ingredient % solids — no MW or chemistry needed. "
-                     "QA / QC: bench/plant adjustment calculators "
-                     "(% solids now; pH next).")
+# ---------------- product family (sidebar, top-level context) ----------------
+fam = st.sidebar.radio(
+    "⚗️ Product family", list(FAMILIES.keys()), key="family",
+    help="Top-level context. Preselects the mode + default reaction and "
+         "surfaces the relevant tools — a soft filter that never hides "
+         "anything and never touches your tables. 'General' = the full tool "
+         "with nothing preselected.")
+F = FAMILIES[fam]
+# On a CHANGE of family, preselect mode + reaction ONCE (not re-forced every
+# rerun) so a later manual change by the user sticks — soft, not locked.
+if st.session_state.get("_last_family") != fam:
+    st.session_state._last_family = fam
+    if F["mode"] is not None:
+        st.session_state.mode_radio = F["mode"]
+    if F["reaction"] is not None:
+        st.session_state.reaction_select = F["reaction"]
+st.sidebar.caption(F["blurb"])
+st.sidebar.caption("Same shared engine for every family — the family layer "
+                   "only sets defaults and surfacing, never the chemistry.")
+if fam == "General":
+    show_all = False  # General already shows everything (collapsed, as today)
+else:
+    show_all = st.sidebar.checkbox(
+        "Show all tools", value=False,
+        help="Reveal and expand every tool panel regardless of family.")
 
-# ===================== COLD BLEND MODE =====================
-if mode.startswith("Cold blend"):
-    import blend_ui
-    blend_ui.render()
-    st.stop()
 
-# ===================== QA / QC MODE =====================
-if mode.startswith("QA"):
-    import qa_ui
-    qa_ui.render()
+def _expanded(panel_key):
+    """Soft surfacing: expand a tool panel if the family lists it (or Show all
+    tools is on). General keeps today's collapsed-by-default look."""
+    if fam == "General":
+        return False
+    if show_all:
+        return True
+    return panel_key in F.get("expand", [])
+
+
+def _fam_tool(flag):
+    """Whether a family-gated reporting tool (oil_length / gel_point) shows."""
+    if fam == "General":
+        return False
+    return bool(F.get(flag)) or show_all
+
+
+mode = st.radio(
+    "Mode", MODE_OPTS, key="mode_radio", horizontal=True,
+    help="Forward: design a charge from ratios. Inverse: analyze an existing "
+         "formula in grams. Cold blend: combine dispersions/solvents by weight "
+         "parts with per-ingredient % solids. QA / QC: bench/plant adjustment "
+         "calculators. 2K urethane: resin + hardener mix ratio to a target "
+         "NCO:OH index. The family preselects this — you can still change it.")
+
+# ---------------- mode dispatch (registry; one line per new tab) ----------------
+if mode in MODE_DISPATCH:
+    import importlib
+    importlib.import_module(MODE_DISPATCH[mode]).render()
     st.stop()
 
 grams_mode = mode.startswith("Grams")
@@ -175,7 +290,8 @@ amount_label = "As-is grams" if grams_mode else "Molar ratio"
 
 # ---------------- quick spec -> ratio (standalone front door) ----------------
 if not grams_mode:
-    with st.expander("⚡ Quick spec → ratio (two components, no setup)"):
+    with st.expander("⚡ Quick spec → ratio (two components, no setup)",
+                     expanded=_expanded("quick_spec")):
         st.caption("Answer 'what ratio hits this spec' directly: one acid + "
                    "one amine/alcohol, a target value, done. For multi-"
                    "component charges use the full 🎯 solver below results.")
@@ -321,8 +437,8 @@ edited = st.data_editor(
         "Functionality": st.column_config.NumberColumn(min_value=0.0,
                                                        format="%.2f"),
         "Group": st.column_config.SelectboxColumn(
-            options=["acid", "amine", "hydroxyl", "anhydride", "capper",
-                     "inert"], help=GROUP_HELP),
+            options=["acid", "amine", "hydroxyl", "isocyanate", "anhydride",
+                     "capper", "inert"], help=GROUP_HELP),
         "Amount": st.column_config.NumberColumn(
             label=amount_label, min_value=0.0, format="%.4f"),
     },
@@ -405,10 +521,11 @@ else:
     if anchor_type != "Total charge mass (g)" and names:
         anchor_comp = st.selectbox("Anchor component", names)
 with c1:
-    reaction = st.selectbox("Condensation reaction", [
-        "none", "amidation (acid+amine)",
-        "amidation + imidazoline (acid+amine)",
-        "esterification (acid+OH)"])
+    reaction = st.selectbox("Condensation / addition reaction", RXN_OPTS,
+                            key="reaction_select",
+                            help="'urethane (NCO+OH)' is an addition reaction "
+                                 "— no condensate. Pair it with the "
+                                 "'isocyanate' group in the table.")
 with c2:
     extent = 1.0
     if reaction != "none":
@@ -432,7 +549,8 @@ if "imidazoline" in reaction:
 # ---------------- imidazoline designer ----------------
 if "imidazoline" in reaction:
     with st.expander("🧬 Imidazoline designer — ratio · conversion · "
-                     "cyclization → % imidazoline (and back)"):
+                     "cyclization → % imidazoline (and back)",
+                     expanded=_expanded("imidazoline_designer")):
         st.caption("For a MONOACID (TOFA-type) + DETA-type polyamine. "
                    "Sequential acylation, one ring per polyamine. The ratio "
                    "sets the ceiling and species mix; **cyclization — a "
@@ -513,9 +631,9 @@ if run and len(valid):
         "functionality": float(r["Functionality"]),
         "group": r["Group"],
     } for _, r in valid.iterrows()]
-    rxn = {"none": "none", "amidation (acid+amine)": "amidation",
-           "amidation + imidazoline (acid+amine)": "amidation",
-           "esterification (acid+OH)": "esterification"}[reaction]
+    rxn = {RXN_NONE: "none", RXN_AMID: "amidation",
+           RXN_IMID: "amidation", RXN_ESTER: "esterification",
+           RXN_URET: "urethane"}[reaction]
 
     try:
         if grams_mode:
@@ -656,6 +774,59 @@ if "last" in st.session_state:
                 st.warning("⚠️ Near-perfect stoichiometry at high conversion "
                            "— Mn unbounded (gel risk for thermoplastic targets).")
 
+        # ---- urethane: residual %NCO + NCO:OH index ----
+        if rxn == "urethane":
+            u1, u2 = st.columns(2)
+            if "pct_nco" in ev:
+                u1.metric("Residual %NCO", f"{ev['pct_nco']:.2f}%",
+                          help="Unreacted isocyanate on the resin — the "
+                               "NCO-terminated prepolymer spec. Addition "
+                               "reaction: no condensate produced.")
+            if car and "nco_oh_index" in car:
+                u2.metric("NCO:OH index", f"{car['nco_oh_index']:.1f}",
+                          help="Charged NCO ÷ OH × 100. 100 = stoichiometric; "
+                               ">100 NCO-rich / NCO-terminated.")
+
+        # ---- alkyd oil length (family-gated) ----
+        if _fam_tool("oil_length"):
+            from formulation_core import oil_length as _oil_length
+            st.markdown("**Oil length**")
+            oil_names = st.multiselect(
+                "Tag the oil / fatty-acid component(s)",
+                [r["name"] for r in out["rows"]], key="oil_tag",
+                help="Oil length = active wt of the tagged rows ÷ theoretical "
+                     "resin solids × 100. NB: classic oil length is on a "
+                     "triglyceride-oil basis; this is the charged-active-"
+                     "weight ratio of whatever you tag.")
+            if oil_names:
+                ol = _oil_length(out, oil_names)
+                bucket = ("short" if ol < 45 else
+                          "medium" if ol < 60 else "long")
+                st.metric("Oil length", f"{ol:.1f}%",
+                          help="<45 short · 45–60 medium · >60 long oil")
+                st.caption(f"Tagged active ÷ resin solids → {bucket} oil "
+                           f"(by charged active weight).")
+
+        # ---- Carothers gel point (family-gated, branched systems) ----
+        if _fam_tool("gel_point"):
+            from formulation_core import gel_point_carothers as _gp
+            g = _gp(out)
+            if g["p_gel"] is not None:
+                st.metric("Carothers gel point",
+                          f"p_gel ≈ {g['p_gel']:.3f}",
+                          delta=f"f_avg {g['f_avg']:.2f}", delta_color="off",
+                          help="Branched step-growth gels at p ≈ 2/f_avg "
+                               "(Carothers; over-predicts vs the Flory "
+                               "statistical treatment). Assumes equal "
+                               "reactivity & balanced stoichiometry.")
+                if L["extent"] >= g["p_gel"]:
+                    st.warning(f"⚠️ Conversion p = {L['extent']:.3f} is at or "
+                               f"past the Carothers gel point "
+                               f"({g['p_gel']:.3f}) — expect gelation.")
+            else:
+                st.caption(f"Average functionality f_avg = {g['f_avg']:.2f} "
+                           f"≤ 2 → linear, no Carothers gel point.")
+
     # ---------------- adjust to yield (grams mode) ----------------
     if L["grams_mode"]:
         st.subheader("5 · Modify at constant yield")
@@ -719,7 +890,8 @@ if "last" in st.session_state:
 
     # ---------------- cook tracker ----------------
     if rxn != "none":
-        with st.expander("🧪 Cook tracker — where am I in the reaction?"):
+        with st.expander("🧪 Cook tracker — where am I in the reaction?",
+                         expanded=_expanded("cook_tracker")):
             st.caption("Enter a mid-cook titration; get implied conversion, "
                        "predicted water to this point, and projected finals.")
             k1, k2, k3, k4 = st.columns(4)
@@ -776,7 +948,8 @@ if "last" in st.session_state:
 
     # ---------------- spec targeting (ratio mode) ----------------
     if rxn != "none" and not L["grams_mode"]:
-        with st.expander("🎯 Hit a target spec — solve a component ratio"):
+        with st.expander("🎯 Hit a target spec — solve a component ratio",
+                         expanded=_expanded("spec_solver")):
             st.caption("Pick the component to vary; everything else holds. "
                        "Solved at the current p and cyclization settings.")
             comp_names_t = [c["name"] for c in L["comps"]]
