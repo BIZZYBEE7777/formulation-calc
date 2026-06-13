@@ -51,6 +51,18 @@ RXN_ESTER = "esterification (acid+OH)"
 RXN_URET = "urethane (NCO+OH)"
 RXN_OPTS = [RXN_NONE, RXN_AMID, RXN_IMID, RXN_ESTER, RXN_URET]
 
+# Target/measured spec keys shared by the quick-spec, cook-tracker and
+# spec-solver dropdowns. 'pct_nco' (residual %NCO) is a urethane target.
+SPEC_LABELS = {"total_amine_value": "Total Amine Value (titration)",
+               "amine_value": "Amine Value (unreacted NH only)",
+               "pct_nco": "%NCO (residual isocyanate)"}
+SPEC_KEYS = ["acid_value", "total_amine_value", "amine_value",
+             "hydroxyl_value", "pct_nco"]
+
+
+def _spec_label(s):
+    return SPEC_LABELS.get(s, s.replace("_", " ").title())
+
 FAMILIES = {
     "General": {
         "mode": None, "reaction": None, "expand": [], "seed": None,
@@ -81,11 +93,11 @@ FAMILIES = {
     "UPR": {
         "mode": MODE_MOLAR, "reaction": RXN_ESTER,
         "expand": ["quick_spec", "spec_solver"],
-        "gel_point": True,
+        "gel_point": True, "unsaturation": True,
         "seed": "demo_3_UPR_MA_PG_DCPD.json",
         "blurb": "Ratios → batch, esterification. Anhydride / DCPD water "
                  "credits live in the Group column of the table; gel point "
-                 "surfaced. Same shared engine."},
+                 "and C=C unsaturation surfaced. Same shared engine."},
     "Waterborne blend": {
         "mode": MODE_BLEND, "reaction": None, "expand": [],
         "seed": "demo_5_coldblend_letdown.json",
@@ -146,8 +158,8 @@ def fetch_mw(identifier: str):
 
 DEFAULT_ROWS = pd.DataFrame([
     {"Component": "", "CAS / name for lookup": "", "MW (g/mol)": None,
-     "Assay %": 100.0, "Functionality": 2.0, "Group": "acid",
-     "Amount": 1.0},
+     "Assay %": 100.0, "Functionality": 2.0, "C=C / mol": 0.0,
+     "Group": "acid", "Amount": 1.0},
 ])
 
 DEFAULT_BLEND = pd.DataFrame([
@@ -155,19 +167,27 @@ DEFAULT_BLEND = pd.DataFrame([
     {"Ingredient": "Water", "% solids": 0.0, "Parts (by weight)": 50.0},
 ])
 
-NUM_COLS = ["MW (g/mol)", "Assay %", "Functionality", "Amount"]
+NUM_COLS = ["MW (g/mol)", "Assay %", "Functionality", "C=C / mol", "Amount"]
+COMP_COLS = ["Component", "CAS / name for lookup", "MW (g/mol)", "Assay %",
+             "Functionality", "C=C / mol", "Group", "Amount"]
 
 def _stabilize(df):
     """Lock column dtypes so Streamlit's data-diff never sees phantom
-    changes (dtype flips between object/float reset editor state)."""
+    changes (dtype flips between object/float reset editor state). Also
+    guarantees the C=C column exists (back-compat for formulas saved before
+    it) and a canonical column order."""
     df = df.copy()
+    if "C=C / mol" not in df.columns:
+        df["C=C / mol"] = 0.0
     for c in NUM_COLS:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     for c in df.columns:
         if c not in NUM_COLS:
             df[c] = df[c].fillna("").astype(str)
-    return df
+    ordered = [c for c in COMP_COLS if c in df.columns]
+    extras = [c for c in df.columns if c not in COMP_COLS]
+    return df[ordered + extras]
 
 if "table" not in st.session_state:
     st.session_state.table = _stabilize(DEFAULT_ROWS.copy())
@@ -253,6 +273,35 @@ else:
         "Show all tools", value=False,
         help="Reveal and expand every tool panel regardless of family.")
 
+# ---- per-family starter formula (explicit action; never auto-loaded) ----
+_seed = F.get("seed")
+if _seed:
+    if st.sidebar.button(
+            f"📂 Load {fam} starter",
+            help="Replace the current component/blend tables with this "
+                 "family's example formula. Save first if you want to keep "
+                 "what you have — this overwrites the tables."):
+        _seed_path = Path(__file__).parent / _seed
+        try:
+            _data = json.loads(_seed_path.read_text())
+            st.session_state.table = _stabilize(pd.DataFrame(_data["table"]))
+            st.session_state.tbl_ver += 1
+            if "blend_table" in _data:
+                st.session_state.blend_table = pd.DataFrame(
+                    _data["blend_table"])
+                st.session_state.blend_ver = \
+                    st.session_state.get("blend_ver", 0) + 1
+            st.session_state.changelog = _data.get("changelog", [])
+            for _k in ("last", "blend_result", "qa_result", "u_result"):
+                st.session_state.pop(_k, None)
+            st.sidebar.success(f"Loaded {fam} starter ({_seed}).")
+            st.rerun()
+        except FileNotFoundError:
+            st.sidebar.warning(f"'{_seed}' not found — add it to the repo "
+                               f"root, next to formulation_app.py.")
+        except Exception as _e:
+            st.sidebar.error(f"Couldn't load {_seed}: {_e}")
+
 
 def _expanded(panel_key):
     """Soft surfacing: expand a tool panel if the family lists it (or Show all
@@ -321,15 +370,8 @@ if not grams_mode:
                                        key="qb_a")
         q3, q4, q5, q6 = st.columns(4)
         with q3:
-            q_tkey = st.selectbox("Target spec", [
-                "total_amine_value", "acid_value", "amine_value",
-                "hydroxyl_value"],
-                format_func=lambda s: {"total_amine_value":
-                                       "Total Amine Value (titration)",
-                                       "amine_value":
-                                       "Amine Value (unreacted NH only)"}
-                    .get(s, s.replace("_", " ").title()),
-                key="q_tk")
+            q_tkey = st.selectbox("Target spec", SPEC_KEYS,
+                                  format_func=_spec_label, key="q_tk")
         with q4:
             q_tval = st.number_input("Target (mg KOH/g)", 0.0, 1500.0,
                                      280.0, format="%.1f", key="q_tv")
@@ -350,16 +392,11 @@ if not grams_mode:
         if q_dual:
             d1, d2 = st.columns(2)
             with d1:
-                q_tkey2 = st.selectbox("Second target", [
-                    "total_amine_value", "acid_value", "amine_value",
-                    "hydroxyl_value"],
+                q_tkey2 = st.selectbox(
+                    "Second target", SPEC_KEYS,
                     index=1 if st.session_state.get("q_tk") ==
                     "total_amine_value" else 0,
-                    format_func=lambda s: {"total_amine_value":
-                                           "Total Amine Value (titration)",
-                                           "amine_value":
-                                           "Amine Value (unreacted NH only)"}
-                    .get(s, s.replace("_", " ").title()), key="q_tk2")
+                    format_func=_spec_label, key="q_tk2")
             with d2:
                 q_tval2 = st.number_input("Second target (mg KOH/g)", 0.0,
                                           1500.0, 10.0, format="%.1f",
@@ -425,7 +462,7 @@ st.caption(f"**Amount column = {amount_label}** in this mode. MW auto-fills "
 edited = st.data_editor(
     st.session_state.table,
     num_rows="dynamic",
-    use_container_width=True,
+    width="stretch",
     column_config={
         "Component": st.column_config.TextColumn(required=True),
         "CAS / name for lookup": st.column_config.TextColumn(),
@@ -436,6 +473,12 @@ edited = st.data_editor(
                                                  format="%.1f"),
         "Functionality": st.column_config.NumberColumn(min_value=0.0,
                                                        format="%.2f"),
+        "C=C / mol": st.column_config.NumberColumn(
+            min_value=0.0, format="%.2f",
+            help="Reactive C=C double bonds per molecule (maleate / fumarate "
+                 "≈ 1, diacrylate = 2, saturated = 0). Drives the "
+                 "unsaturation / crosslink bookkeeping for peroxide- and "
+                 "UV-cured resins — a backbone count, not a cure prediction."),
         "Group": st.column_config.SelectboxColumn(
             options=["acid", "amine", "hydroxyl", "isocyanate", "anhydride",
                      "capper", "inert"], help=GROUP_HELP),
@@ -465,6 +508,7 @@ if LIB_FILE.exists():
                     "MW (g/mol)": float(row.get("MW") or 0) or None,
                     "Assay %": float(row.get("Assay %") or 100),
                     "Functionality": float(row.get("Functionality") or 2),
+                    "C=C / mol": float(row.get("C=C") or 0),
                     "Group": (row.get("Group") or "acid").strip().lower(),
                     "Amount": 1.0,
                 }
@@ -589,7 +633,7 @@ if "imidazoline" in reaction:
             st.dataframe(pd.DataFrame(
                 {"Species": list(sp.keys()),
                  "mol per mol amine": [round(v, 4) for v in sp.values()]}),
-                hide_index=True, use_container_width=True)
+                hide_index=True, width="stretch")
             if res["free_acid_per_amine"] > 1e-6:
                 st.caption(f"Unreacted acid riding in product: "
                            f"{res['free_acid_per_amine']:.3f} mol/mol amine.")
@@ -622,13 +666,14 @@ if "imidazoline" in reaction:
                                 f"{c_req:.2f} to see water/receiver "
                                 f"predictions for the full charge.")
 
-run = st.button("Calculate batch", type="primary", use_container_width=True)
+run = st.button("Calculate batch", type="primary", width="stretch")
 
 if run and len(valid):
     comps = [{
         "name": r["Component"], "cas": r["CAS / name for lookup"],
         "mw": float(r["MW (g/mol)"]), "assay": float(r["Assay %"]) / 100.0,
         "functionality": float(r["Functionality"]),
+        "unsat": float(r["C=C / mol"]) if pd.notna(r["C=C / mol"]) else 0.0,
         "group": r["Group"],
     } for _, r in valid.iterrows()]
     rxn = {RXN_NONE: "none", RXN_AMID: "amidation",
@@ -679,7 +724,7 @@ if "last" in st.session_state:
         if L.get("norm_ratios"):
             d["Molar ratio"] = round(L["norm_ratios"][i], 4)
         rows_disp.append(d)
-    st.dataframe(pd.DataFrame(rows_disp), use_container_width=True,
+    st.dataframe(pd.DataFrame(rows_disp), width="stretch",
                  hide_index=True)
 
     m1, m2, m3, m4 = st.columns(4)
@@ -827,6 +872,29 @@ if "last" in st.session_state:
                 st.caption(f"Average functionality f_avg = {g['f_avg']:.2f} "
                            f"≤ 2 → linear, no Carothers gel point.")
 
+        # ---- reactive unsaturation (family-gated; radical-cure resins) ----
+        if _fam_tool("unsaturation"):
+            from formulation_core import unsaturation_stats as _us
+            u = _us(out)
+            if u["cc_moles"] > 0:
+                uu1, uu2 = st.columns(2)
+                eqw = ("∞" if u["cc_eq_weight"] == float("inf")
+                       else f"{u['cc_eq_weight']:.0f} g/mol")
+                uu1.metric("C=C equivalent weight", eqw,
+                           help="Resin solids per mole of reactive C=C. Lower "
+                                "= more unsaturation = higher crosslink-density "
+                                "potential.")
+                uu2.metric("Unsaturation", f"{u['mmol_per_g']:.2f} mmol C=C/g",
+                           help="= mol C=C per kg resin. A backbone count for "
+                                "peroxide / UV radical cure — NOT a cure, gel "
+                                "time or exotherm prediction (those are "
+                                "kinetic / measured).")
+            else:
+                st.caption("Set the **C=C / mol** column on the unsaturated "
+                           "monomer(s) (maleic/fumaric ≈ 1, acrylate per "
+                           "double bond) to see C=C equivalent weight and "
+                           "unsaturation per kg.")
+
     # ---------------- adjust to yield (grams mode) ----------------
     if L["grams_mode"]:
         st.subheader("5 · Modify at constant yield")
@@ -896,14 +964,8 @@ if "last" in st.session_state:
                        "predicted water to this point, and projected finals.")
             k1, k2, k3, k4 = st.columns(4)
             with k1:
-                mkey = st.selectbox("Measured value", [
-                    "acid_value", "total_amine_value", "amine_value",
-                    "hydroxyl_value"],
-                    format_func=lambda s: {"total_amine_value":
-                                       "Total Amine Value (titration)",
-                                       "amine_value":
-                                       "Amine Value (unreacted NH only)"}
-                    .get(s, s.replace("_", " ").title()))
+                mkey = st.selectbox("Measured value", SPEC_KEYS,
+                                    format_func=_spec_label)
             with k2:
                 mval = st.number_input("Titrated value (mg KOH/g)",
                                        min_value=0.0, value=40.0,
@@ -957,15 +1019,8 @@ if "last" in st.session_state:
             with g1:
                 vary = st.selectbox("Vary component", comp_names_t)
             with g2:
-                tkey = st.selectbox("Target", [
-                    "acid_value", "total_amine_value", "amine_value",
-                    "hydroxyl_value"],
-                    format_func=lambda s: {"total_amine_value":
-                                       "Total Amine Value (titration)",
-                                       "amine_value":
-                                       "Amine Value (unreacted NH only)"}
-                    .get(s, s.replace("_", " ").title()),
-                    key="tkey")
+                tkey = st.selectbox("Target", SPEC_KEYS,
+                                    format_func=_spec_label, key="tkey")
             with g3:
                 tval = st.number_input("Target value", min_value=0.0,
                                        value=280.0, format="%.1f")
@@ -1015,7 +1070,7 @@ if "last" in st.session_state:
                              for x in rws],
                     })
                     st.dataframe(wr, hide_index=True,
-                                 use_container_width=True)
+                                 width="stretch")
                     st.session_state.changelog.append(
                         f"[{date.today()}] Spec solve: {vary} ratio "
                         f"{old_r:.4f} → {r_new:.4f} for "

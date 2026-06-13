@@ -108,7 +108,7 @@ def render():
             "Grams": [round(rg, 2), round(hg, 2), round(rg + hg, 2)],
             "wt%": [round(100 * rg / (rg + hg), 2),
                     round(100 * hg / (rg + hg), 2), 100.0],
-        }), use_container_width=True, hide_index=True)
+        }), width="stretch", hide_index=True)
         st.caption(f"Amounts shown {unit_note}. OH = {res['eq_oh']*scale:.4f} "
                    f"eq, NCO = {res['eq_nco']*scale:.4f} eq "
                    f"(index {res['index']:.1f}).")

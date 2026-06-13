@@ -61,7 +61,7 @@ def render():
                    "to 100% (Value ignored) — usually water.")
         spec_df = st.data_editor(
             st.session_state.blend_specs, num_rows="dynamic",
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "Ingredient": st.column_config.TextColumn(required=True),
                 "% solids": st.column_config.NumberColumn(
@@ -113,7 +113,7 @@ def render():
                    "wt%. % solids per TDS; solvents/water = 0.")
         bt = st.data_editor(
             st.session_state.blend_table, num_rows="dynamic",
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "Ingredient": st.column_config.TextColumn(required=True),
                 "% solids": st.column_config.NumberColumn(
@@ -144,7 +144,7 @@ def render():
         "Solids contribution (g/100 g)":
             [round(w * s, 2) for w, s in zip(wt, solids)],
     })
-    st.dataframe(bdf, use_container_width=True, hide_index=True)
+    st.dataframe(bdf, width="stretch", hide_index=True)
     st.metric("Blend solids", f"{blend_pct:.2f}%")
 
     # simple re-target panel (known-parts path only; solver has its own)
@@ -202,7 +202,7 @@ def render():
     for label, gtot in sizes:
         scale_df[f"{label} (g)"] = [round(x, 2)
                                     for x in blend_batch_grams(parts, gtot)]
-    st.dataframe(scale_df, use_container_width=True, hide_index=True)
+    st.dataframe(scale_df, width="stretch", hide_index=True)
 
     # ---------------- charge sheet ----------------
     st.subheader("Charge sheet")

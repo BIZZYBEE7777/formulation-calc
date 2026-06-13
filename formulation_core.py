@@ -1036,3 +1036,19 @@ def gel_point_carothers(summary):
     f_avg = sum(r["moles"] * r["functionality"] for r in react) / n
     p_gel = 2.0 / f_avg if f_avg > 2.0 else None
     return {"f_avg": f_avg, "p_gel": p_gel}
+
+
+def unsaturation_stats(summary):
+    """Reactive C=C bookkeeping for radical-cured resins (UPR / vinyl ester /
+    acrylate; peroxide- or UV-initiated). Uses each component's 'unsat' = number
+    of reactive C=C double bonds per molecule (maleate/fumarate ~1, diacrylate
+    = 2, ...). Returns total moles C=C, C=C equivalent weight (g resin solids
+    per mol C=C), and mmol C=C per g resin (= mol C=C per kg).
+
+    A backbone COUNT, not a cure prediction: gel time, exotherm, cure depth and
+    pot life are kinetic/measured and deliberately NOT modelled here."""
+    cc = sum(r["moles"] * r.get("unsat", 0.0) for r in summary["rows"])
+    resin = summary.get("resin_mass", 0.0)
+    return {"cc_moles": cc,
+            "cc_eq_weight": (resin / cc if cc > 0 else float("inf")),
+            "mmol_per_g": (1000.0 * cc / resin if resin > 0 else 0.0)}

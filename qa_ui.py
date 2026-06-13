@@ -120,7 +120,7 @@ def render():
                "e.g. 2 and 1 for 2:1); the tool solves the common scale.")
     streams_df = st.data_editor(
         st.session_state.qa_streams, num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Add stream": st.column_config.TextColumn(required=True),
             "% solids": st.column_config.NumberColumn(
@@ -181,7 +181,7 @@ def render():
             "Mode": [s["mode"] for s in R["streams"]],
             f"Add ({u})": [round(m, 3) for m in res["stream_masses"]],
         })
-        st.dataframe(add_df, use_container_width=True, hide_index=True)
+        st.dataframe(add_df, width="stretch", hide_index=True)
         st.caption(f"Start {R['batch_mass']:.2f} {u} @ {R['cur_pct']:.2f}% → "
                    f"add the above → {res['final_mass']:.2f} {u} @ "
                    f"{res['final_solids_pct']:.2f}%. Exact mass balance — "
@@ -212,7 +212,7 @@ def render():
                "below the target are flagged (can't raise solids).")
     cands_df = st.data_editor(
         st.session_state.qa_cands, num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Carrier": st.column_config.TextColumn(required=True),
             "% solids": st.column_config.NumberColumn(
@@ -247,7 +247,7 @@ def render():
                         f"Final mass ({unit})": None,
                         "Final % solids": None,
                         "Feasible": "✗ at/below target"})
-            st.dataframe(pd.DataFrame(disp), use_container_width=True,
+            st.dataframe(pd.DataFrame(disp), width="stretch",
                          hide_index=True)
             feas = [r for r in rows if r["feasible"]]
             if feas:
