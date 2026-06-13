@@ -149,17 +149,25 @@ with st.expander("💾 Save / load formula"):
                 st.error(f"Couldn't load file: {e}")
 
 mode = st.radio("Mode", ["Molar ratios → batch", "Grams → ratios & theory",
-                         "Cold blend (wt% + solids)"],
+                         "Cold blend (wt% + solids)", "QA / QC tools"],
                 horizontal=True,
                 help="Forward: design a charge from ratios. Inverse: analyze "
                      "an existing formula in grams. Cold blend: combine "
                      "dispersions/solvents by weight parts with per-"
-                     "ingredient % solids — no MW or chemistry needed.")
+                     "ingredient % solids — no MW or chemistry needed. "
+                     "QA / QC: bench/plant adjustment calculators "
+                     "(% solids now; pH next).")
 
 # ===================== COLD BLEND MODE =====================
 if mode.startswith("Cold blend"):
     import blend_ui
     blend_ui.render()
+    st.stop()
+
+# ===================== QA / QC MODE =====================
+if mode.startswith("QA"):
+    import qa_ui
+    qa_ui.render()
     st.stop()
 
 grams_mode = mode.startswith("Grams")

@@ -723,3 +723,127 @@ def solve_two_targets(components, vary_name, reaction, key1, t1, key2, t2,
     p_fin = (pa + pb) / 2
     e_fin, r_fin, s_fin = err_at(p_fin)
     return r_fin, p_fin, s_fin, None
+
+
+# ---------------------------------------------------------------------------
+# QA / QC: multi-stream %solids adjustment (exact mass balance)
+#   - one 'solve' stream  -> single carrier solved for
+#   - many 'solve' streams -> carriers combined in fixed ratio (Amount =
+#     ratio weight), common scale solved. One equation, one unknown either way.
+# ---------------------------------------------------------------------------
+
+def solve_solids_adjustment(batch_mass, current_solids_pct, target_solids_pct,
+                            streams):
+    """Exact mass-balance %solids adjustment. streams: list of
+    {name, solids_pct, mode, amount}; mode 'fixed' (amount known) or 'solve'.
+    Multiple 'solve' streams combine in the fixed weight ratio given by their
+    amount (defaults to 1.0 if <=0). Returns {solved_names, solved_total,
+    group_scale, final_mass, final_solids_pct, stream_masses, warning}."""
+    s0 = current_solids_pct / 100.0
+    tgt = target_solids_pct / 100.0
+    S0 = batch_mass * s0
+
+    solves = [i for i, x in enumerate(streams) if x["mode"] == "solve"]
+    if len(solves) < 1:
+        return {"warning": ("Mark at least one addition stream as 'solve'. "
+                            "One solve = a single carrier; multiple solves = "
+                            "carriers combined in the fixed ratio given by "
+                            "their Amount column.")}
+
+    Mf = sum(x["amount"] for i, x in enumerate(streams) if i not in solves)
+    Sf = sum(x["amount"] * x["solids_pct"] / 100.0
+             for i, x in enumerate(streams) if i not in solves)
+
+    v = {i: (streams[i]["amount"] if streams[i]["amount"] > 0 else 1.0)
+         for i in solves}
+    sumv = sum(v.values())
+    sumvs = sum(v[i] * streams[i]["solids_pct"] / 100.0 for i in solves)
+
+    denom = tgt * sumv - sumvs
+    if abs(denom) < 1e-12:
+        s_eff = sumvs / sumv if sumv else 0.0
+        return {"warning": (f"The solve carrier(s) average {100*s_eff:.1f}% "
+                            f"solids = the target — adding them cannot move "
+                            f"the batch toward {target_solids_pct:.1f}%. Use "
+                            f"a carrier above the target to raise, below to "
+                            f"dilute.")}
+    k = (S0 + Sf - tgt * (batch_mass + Mf)) / denom
+
+    if k < 0:
+        s_eff = sumvs / sumv if sumv else 0.0
+        direction = "raise" if tgt > s0 else "lower"
+        return {"warning": (f"Unreachable: to {direction} solids from "
+                            f"{current_solids_pct:.1f}% to "
+                            f"{target_solids_pct:.1f}%, the solve carrier(s) "
+                            f"(avg {100*s_eff:.1f}% solids) would need a "
+                            f"negative amount. To raise, the carrier must be "
+                            f"ABOVE the target; to dilute, below.")}
+
+    stream_masses = [x["amount"] for x in streams]
+    for i in solves:
+        stream_masses[i] = k * v[i]
+    added = sum(stream_masses[i] for i in solves)
+    final_mass = batch_mass + Mf + added
+    final_solids = (100.0 * (S0 + Sf + sum(stream_masses[i] *
+                    streams[i]["solids_pct"] / 100.0 for i in solves))
+                    / final_mass if final_mass else 0.0)
+
+    return {"solved_names": [streams[i]["name"] for i in solves],
+            "solved_total": added, "group_scale": k,
+            "final_mass": final_mass, "final_solids_pct": final_solids,
+            "stream_masses": stream_masses, "warning": None}
+
+
+def compare_solids_carriers(batch_mass, current_solids_pct, target_solids_pct,
+                            candidates, fixed_streams=None):
+    """Evaluate each candidate carrier {name, solids_pct} INDIVIDUALLY as the
+    sole solve stream (with any shared fixed_streams). Returns rows:
+    {name, solids_pct, amount, final_mass, final_pct, feasible, note}.
+    Infeasible = carrier at/below target (can't raise) or other guard."""
+    fixed_streams = fixed_streams or []
+    out = []
+    for cand in candidates:
+        streams = list(fixed_streams) + [
+            {"name": cand["name"], "solids_pct": cand["solids_pct"],
+             "mode": "solve", "amount": 0.0}]
+        r = solve_solids_adjustment(batch_mass, current_solids_pct,
+                                    target_solids_pct, streams)
+        if r.get("warning"):
+            out.append({"name": cand["name"],
+                        "solids_pct": cand["solids_pct"], "amount": None,
+                        "final_mass": None, "final_pct": None,
+                        "feasible": False, "note": r["warning"]})
+        else:
+            out.append({"name": cand["name"],
+                        "solids_pct": cand["solids_pct"],
+                        "amount": r["solved_total"],
+                        "final_mass": r["final_mass"],
+                        "final_pct": r["final_solids_pct"],
+                        "feasible": True, "note": ""})
+    return out
+
+
+def qa_solids_sheet_text(batch_mass, unit, cur_pct, tgt_pct, names,
+                         solids_pcts, masses, final_mass, final_pct, meta):
+    """Plain-text charge sheet for a %solids adjustment."""
+    L = []
+    ap = L.append
+    ap("=" * 64)
+    ap("QA - % SOLIDS ADJUSTMENT")
+    ap("=" * 64)
+    ap(f"Project: {meta.get('project','____')}   Batch ID: "
+       f"{meta.get('exp_id','____')}   By: {meta.get('chemist','____')}   "
+       f"Date: {meta.get('date','')}")
+    ap("-" * 64)
+    ap(f"Starting batch: {batch_mass:.2f} {unit} @ {cur_pct:.2f}% solids")
+    ap(f"Target: {tgt_pct:.2f}% solids")
+    ap("-" * 64)
+    ap(f"{'#':<3}{'Add stream':<26}{'% solids':>9}{unit:>12}{'  [ ] added'}")
+    for i, (n, s, g) in enumerate(zip(names, solids_pcts, masses), 1):
+        ap(f"{i:<3}{str(n)[:25]:<26}{s:>8.1f}%{g:>12.2f}      [ ]")
+    ap("-" * 64)
+    ap(f"Final batch: {final_mass:.2f} {unit} @ {final_pct:.2f}% solids")
+    ap("Measured final % solids: ________")
+    ap("Notes:")
+    ap("\n\n")
+    return "\n".join(L)
